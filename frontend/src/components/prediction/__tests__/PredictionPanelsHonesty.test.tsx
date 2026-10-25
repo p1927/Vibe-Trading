@@ -171,6 +171,24 @@ describe("single-source news (D518)", () => {
   });
 });
 
+describe("no-forecast stories say why, in words (D520, D527)", () => {
+  it.each([
+    ["legacy_fabricated_forecast", "retired fixed-constant model"],
+    ["evidence_too_weak", "too low to size a move"],
+    ["direction_unresolved", "conflicting directions"],
+  ])("%s", async (reason, words) => {
+    const report = {
+      status: "ok",
+      summary: { approved_count: 1, partial_count: 0 },
+      items: [{ id: "a", title: "A story", predicted_impact: { forecast_available: false, no_forecast_reason: reason, return_pct: null, nifty_points: null } }],
+    };
+    render(<NewsImpactPanel horizonDays={14} externalReport={report as never} />);
+    expect(await screen.findByText("No forecast")).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(words))).toBeInTheDocument();
+    expect(screen.queryByText(/pts/)).toBeNull(); // never a number beside the absence
+  });
+});
+
 describe("one writer, latest request wins", () => {
   it("a push-driven news panel is not overwritten by its own poll", async () => {
     vi.useFakeTimers();

@@ -1,6 +1,7 @@
 import { ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HistoricalUpcomingEvent, HubNewsCalendarEvent, HubNewsImpactFigures } from "@/lib/api";
+import { noForecastReasonLabel } from "@/lib/noForecastReason";
 import { safeHttpUrl } from "@/lib/safeUrl";
 import { istTodayIso } from "@/lib/istTime";
 
@@ -21,27 +22,12 @@ function formatReturnPct(returnPct?: number | null): string | null {
   return `${sign}${returnPct.toFixed(2)}%`;
 }
 
-/** Human label for news_impact_engine._no_forecast's machine-readable reason codes. */
-const NO_FORECAST_REASON_LABELS: Record<string, string> = {
-  uncalibrated_bucket: "no calibrated magnitude for this kind of story yet",
-  no_directional_cause_indicators: "no directional cause was extracted from the story",
-  direction_unresolved: "the extracted causes point in conflicting directions",
-  no_spot_or_primary_factor: "no index level or primary factor to score against",
-  calibration_lookup_failed: "the calibration lookup failed",
-  simulate_index_prediction_failed: "the index simulation failed",
-  ledger_row_had_no_forecast: "the stored ledger row carried no forecast",
-};
-
 function noForecastNote(predicted?: HubNewsImpactFigures | null): string | null {
   if (!predicted) return null;
   const declined =
     predicted.forecast_available === false ||
     (predicted.return_pct == null && predicted.nifty_points == null);
-  if (!declined) return null;
-  const reason = predicted.no_forecast_reason;
-  return reason
-    ? NO_FORECAST_REASON_LABELS[reason] ?? String(reason).replace(/_/g, " ")
-    : "the engine declined to forecast (no reason recorded)";
+  return declined ? noForecastReasonLabel(predicted.no_forecast_reason) : null;
 }
 
 function directionTone(direction: "up" | "down" | "flat" | null): string {
