@@ -57,9 +57,6 @@ export const MACRO_EXTENDED_KEYS = [
   "usd_inr_momentum_5d",
   "us_10y_velocity_3d",
   "fii_net_5d_momentum",
-  "nifty_ichimoku_conv",
-  "nifty_ichimoku_base",
-  "nifty_supertrend",
   "nifty_keltner_pct_b",
   "index_sentiment_news",
   // 16 registry-catalogued market="GLOBAL"/FX-pair factors (2026-09-03) — mirrors
