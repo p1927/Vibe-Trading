@@ -68,6 +68,7 @@ const NO_FORECAST_REASON_LABELS: Record<string, string> = {
   calibration_lookup_failed: "the calibration lookup failed",
   simulate_index_prediction_failed: "the index simulation failed",
   ledger_row_had_no_forecast: "the stored ledger row carried no forecast",
+  legacy_fabricated_forecast: "this story was scored by the retired fixed-constant model; no real forecast exists",
 };
 
 function noForecastReasonLabel(reason?: string | null): string {
@@ -505,6 +506,14 @@ export function NewsImpactPanel({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
+                  {item.single_source ? (
+                    <span
+                      title="Backed by one article; counted at half weight"
+                      className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    >
+                      Single source
+                    </span>
+                  ) : null}
                   {consensusBadge(consensus)}
                   {statusBadge(vStatus)}
                 </div>

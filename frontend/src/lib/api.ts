@@ -6435,6 +6435,8 @@ export interface NewsImpactItem {
   published_at?: string;
   title?: string;
   raw_headline?: string;
+  /** D518: backed by a single reference; the prediction counts it at half weight. */
+  single_source?: boolean;
   url?: string;
   source?: string;
   content_summary?: string;

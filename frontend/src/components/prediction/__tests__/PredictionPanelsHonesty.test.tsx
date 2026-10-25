@@ -154,6 +154,23 @@ describe("unknown is not zero", () => {
   });
 });
 
+describe("single-source news (D518)", () => {
+  it("flags a single-reference story and only that one", async () => {
+    const report = {
+      status: "ok",
+      summary: { approved_count: 2, partial_count: 0 },
+      items: [
+        { id: "a", title: "Lone story", single_source: true },
+        { id: "b", title: "Merged story" },
+      ],
+    };
+    render(<NewsImpactPanel horizonDays={14} externalReport={report as never} />);
+    const badges = await screen.findAllByTitle("Backed by one article; counted at half weight");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("Single source");
+  });
+});
+
 describe("one writer, latest request wins", () => {
   it("a push-driven news panel is not overwritten by its own poll", async () => {
     vi.useFakeTimers();
