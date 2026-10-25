@@ -5002,14 +5002,19 @@ def _light_refresh_skip_reason(key: str) -> str | None:
     from trade_integrations.dataflows.news_hub_bridge.replay_gate import is_replaying
     from trade_integrations.market_registry import market_for_ticker
 
+    from trade_integrations.stock_simulator.integration import simulator_status
+
     market = market_for_ticker(key)
+    market_open = is_market_open_for_market(market)
     try:
-        if is_replaying(market):
+        # The simulator also replays by itself while the market is shut (`market_closed_fallback`): that is
+        # a closed market, not an armed replay, and the page must say so.
+        if is_replaying(market) and (market_open or simulator_status().get("reason") == "explicit"):
             return "replay_armed"
     except Exception:  # simulator cannot answer: polling blind during a possible replay is worse than skipping
         logger.warning("light refresh skipped: replay state unknown", exc_info=True)
         return "simulator_unavailable"
-    return None if is_market_open_for_market(market) else "market_closed"
+    return None if market_open else "market_closed"
 
 
 @trade_router.get("/index-prediction/refresh-gate")
