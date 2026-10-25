@@ -126,13 +126,14 @@ def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
 
     store = ScheduledResearchJobStore()
     watch_id, _, _ = _job_ids(agent_id)
-    job = store.get(watch_id)
-    if job is None or job.status == JobStatus.RUNNING:
-        return
-    now_ms = int(time.time() * 1000)
-    pull_due_now(job, now_ms)
-    job.status = JobStatus.PENDING
-    store.upsert(job)
+    # One transaction and a field-scoped write: `get` then a whole-record `upsert` let a tick that the executor
+    # started in between be overwritten with a stale PENDING, and the next tick dispatched the run a second time.
+    with store.transaction():
+        job = store.get(watch_id)
+        if job is None or job.status == JobStatus.RUNNING:
+            return
+        pull_due_now(job, int(time.time() * 1000))
+        store.update_run_state(watch_id, status=JobStatus.PENDING, next_run_at=job.next_run_at)
     try:
         from src.api.scheduled_routes import _get_scheduled_research_executor
 

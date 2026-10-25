@@ -208,6 +208,11 @@ def complete_job(
     )
 
 
+class _NeverRaised(Exception):
+    """Stands in for ``PipelineCancelledError`` until its import has run (an earlier failure must still reach
+    ``except Exception``, not die as an ``UnboundLocalError`` in the except clause itself)."""
+
+
 def run_worker(job_id: str) -> None:
     """Blocking worker — run in subprocess or background thread."""
     job = _get_job_record(job_id)
@@ -223,6 +228,7 @@ def run_worker(job_id: str) -> None:
     job_failed = False
     job_error = ""
     pipeline_logger = None
+    cancelled_error: type[BaseException] = _NeverRaised
 
     def on_log(entry) -> None:
         append_log(job_id, entry.to_dict())
@@ -244,6 +250,7 @@ def run_worker(job_id: str) -> None:
         from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
         from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
 
+        cancelled_error = PipelineCancelledError
         clear_pipeline_cancel(job_id=job_id)
         set_pipeline_job_id(job_id)
         ensure_trade_stack_path()
@@ -281,7 +288,7 @@ def run_worker(job_id: str) -> None:
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
         complete_job(job_id, ticker=key, artifact=artifact, warnings=artifact.get("data_warnings") or [])
-    except PipelineCancelledError as exc:
+    except cancelled_error as exc:
         message = f"Pipeline cancelled: {exc.reason}"
         logger.info("index-prediction run cancelled (job=%s ticker=%s reason=%s)", job_id, key, exc.reason)
         append_log(
