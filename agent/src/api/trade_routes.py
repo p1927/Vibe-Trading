@@ -866,6 +866,8 @@ class ConstituentInfo(BaseModel):
     name: str = ""
     sector: str = ""
     weight: float | None = None
+    # No published weight for this member (D410): `weight` is then a 0.0 placeholder, not a real 0% share.
+    weight_missing: bool = False
 
 
 class RecordingConstituentsResponse(BaseModel):
@@ -4329,6 +4331,7 @@ def get_recording_constituents(
                 name=row.name or row.symbol,
                 sector=row.sector,
                 weight=row.weight,
+                weight_missing=row.weight_missing,
             )
             for row in rows
         ]
