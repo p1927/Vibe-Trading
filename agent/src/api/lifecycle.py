@@ -49,6 +49,27 @@ def _configure_process_logging() -> None:
         logging.getLogger(__name__).warning("root logging configuration failed", exc_info=True)
 
 
+# Modules a route imports on its first request. Cold, that import is 4 to 23 s (measured on the release
+# API: /knowledge/wiki 23 s, /swarm/presets 10 s, /channels/status 3 s, then ~0.2 s), past the UI's 25 s
+# client timeout, and /channels/status imports on the event loop thread, so it stalled every request.
+_WARM_ROUTE_IMPORTS = (
+    "src.swarm",
+    "src.channels.runtime",
+    "src.channels.manager",
+    "trade_integrations.knowledge_engine.query",
+)
+
+
+def _warm_route_imports() -> None:
+    import importlib
+
+    for name in _WARM_ROUTE_IMPORTS:
+        try:
+            importlib.import_module(name)
+        except Exception:  # the route reports its own import error when it is hit
+            logger.warning("route import warm-up failed for %s", name, exc_info=True)
+
+
 async def _run_startup_preflight() -> None:
     """Run the local preflight gate on server startup; raise if a critical check failed.
 
@@ -114,6 +135,9 @@ async def _run_startup_preflight() -> None:
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
     start_background_probes(console)
+    import threading
+
+    threading.Thread(target=_warm_route_imports, name="route-import-warmup", daemon=True).start()
 
 
 async def _stop_scheduled_research_on_shutdown() -> None:
