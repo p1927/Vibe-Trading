@@ -195,7 +195,7 @@ def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[st
 
 
 _WIDGET_DEDUP_WINDOW_MS = 15 * 60 * 1000
-_recent_trade_plan_widgets: dict[str, list[tuple[int, str, str]]] = {}
+_recent_trade_plan_widgets: dict[str, list[tuple[int, str, str, str]]] = {}
 
 
 def _trade_widget_strategy_key(widget: dict[str, Any]) -> str:
@@ -209,24 +209,38 @@ def _trade_widget_strategy_key(widget: dict[str, Any]) -> str:
     ).strip().lower()
 
 
+#: Keys that differ between two emissions of the SAME plan (identity / timestamps), left out of the fingerprint.
+_WIDGET_VOLATILE_KEYS = frozenset({"widget_id", "id", "meta", "created_at", "generated_at", "ts", "as_of"})
+
+
+def _trade_widget_fingerprint(widget: dict[str, Any]) -> str:
+    stable = {k: v for k, v in widget.items() if k not in _WIDGET_VOLATILE_KEYS}
+    return json.dumps(stable, sort_keys=True, default=str)
+
+
 def _should_skip_duplicate_trade_widget(session_id: str, widget: dict[str, Any]) -> bool:
-    """Suppress duplicate trade_plan.widget SSE within 15m for same underlying+strategy."""
+    """Suppress a REPEATED trade_plan.widget SSE within 15m: same underlying, strategy and plan content.
+
+    A regenerated widget (new strikes, spot or legs) is a different plan and must pass: dropping it left the
+    stale widget bound to the session and executable ([[2026-10-14-r9c-vibe-api-providers-p3-findings]] item 4).
+    """
     if not session_id:
         return False
     underlying = str(widget.get("underlying") or "").upper()
     strategy = _trade_widget_strategy_key(widget)
     if not underlying:
         return False
+    plan = _trade_widget_fingerprint(widget)
     now_ms = int(time.time() * 1000)
     recent = [
         row
         for row in _recent_trade_plan_widgets.get(session_id, [])
         if now_ms - row[0] < _WIDGET_DEDUP_WINDOW_MS
     ]
-    for ts, u, s in recent:
-        if u == underlying and s == strategy:
+    for ts, u, s, p in recent:
+        if u == underlying and s == strategy and p == plan:
             return True
-    recent.append((now_ms, underlying, strategy))
+    recent.append((now_ms, underlying, strategy, plan))
     _recent_trade_plan_widgets[session_id] = recent[-30:]
     return False
 

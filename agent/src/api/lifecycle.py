@@ -47,6 +47,11 @@ def _configure_process_logging() -> None:
         configure_trade_logging()
     except Exception:  # pragma: no cover — logging must never block startup
         logging.getLogger(__name__).warning("root logging configuration failed", exc_info=True)
+    # Per worker: with --reload the server runs in a uvicorn child, where the parent's install in
+    # server_main never applied, so `?ticket=` values reached the access log unredacted. Idempotent.
+    from src.api.security import install_access_log_redaction_filter
+
+    install_access_log_redaction_filter()
 
 
 # Modules a route imports on its first request. Cold, that import is 4 to 23 s (measured on the release
