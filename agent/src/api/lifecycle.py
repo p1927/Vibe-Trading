@@ -76,6 +76,21 @@ def _warm_route_imports() -> None:
         load_wiki_pages()
     except Exception:
         logger.warning("wiki page warm-up failed", exc_info=True)
+    # factor-history and forecast-lab built the aligned panel / hub context on their first request
+    # (5-9 s CPU, 21-40 s on a busy host: past the UI's 25 s timeout). Build the route-default keys here;
+    # the panel cache then serves them stale-while-revalidate (history_panel.load_aligned_panel_history).
+    # ponytail: only the route defaults (NIFTY, 90 d, 14 d horizon) are warmed; another `days` pays one cold build.
+    try:
+        from trade_integrations.dataflows.prediction_ledger_bridge import list_factor_history_series
+
+        list_factor_history_series(days=90, start=None, factors=None)
+        from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
+            context_from_hub,
+        )
+
+        context_from_hub("NIFTY", horizon_days=14)
+    except Exception:
+        logger.warning("prediction panel warm-up failed", exc_info=True)
 
 
 async def _run_startup_preflight() -> None:
