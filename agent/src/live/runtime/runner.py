@@ -536,7 +536,7 @@ class LiveRunner:
             ).to_dict()
 
         audit_id = self._audit(
-            kind="order_placed",
+            kind="tick_completed",
             outcome="accepted",
             intent="autonomous tick completed",
         )

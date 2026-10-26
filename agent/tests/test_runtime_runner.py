@@ -235,6 +235,8 @@ def test_happy_path_tick_ordering() -> None:
     assert result["agent_result"] == {"status": "success", "content": "held"}
     # Order: halt → mandate → reconcile → invoke → audit.
     assert tracker.calls == ["halt", "mandate", "reconcile", "invoke", "audit"]
+    # A completed tick is not an order: the compliance chain must not record one.
+    assert tracker.audits[-1]["kind"] == "tick_completed"
     # Mandate was pinned into the prompt actually sent to the agent.
     assert tracker.agent_prompts and "Max trades per UTC day: 5" in tracker.agent_prompts[0]
 

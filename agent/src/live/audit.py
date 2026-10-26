@@ -131,6 +131,7 @@ LiveActionKind = Literal[
     "breach",
     "halt_tripped",
     "halt_cleared",
+    "tick_completed",
 ]
 
 #: Canonical outcomes (SPEC §5).
