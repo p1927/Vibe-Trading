@@ -1,10 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { CausalHypothesis, IndexDayAttribution } from "@/lib/api";
+import { formatSignedPercent } from "@/lib/formatters";
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 const CATEGORY_LABEL: Record<string, string> = {
   commodity: "Commodity",
@@ -109,7 +106,7 @@ export function DayMoveCauses({ attribution, causalHypotheses, compact }: Props)
           <ul className="mt-1 space-y-0.5 pl-2">
             {attribution.factor_drivers.map((d) => (
               <li key={d.factor}>
-                {d.label ?? d.factor}: {d.prev} → {d.current} ({fmtPct(d.change_pct)} d/d)
+                {d.label ?? d.factor}: {d.prev} → {d.current} ({formatSignedPercent(d.change_pct)} d/d)
               </li>
             ))}
           </ul>

@@ -45,7 +45,7 @@ describe("RunDetail missing readings", () => {
     await screen.findByText("Null xray");
     fireEvent.click(screen.getByRole("tab", { name: "Portfolio Studio" }));
     const vol = (await screen.findByText("Annualized Vol")).parentElement!;
-    expect(vol).toHaveTextContent("-");
+    expect(vol).toHaveTextContent("—");
     expect(vol).not.toHaveTextContent("0.0%");
     expect(screen.getByText("Max Drawdown").parentElement).not.toHaveTextContent("0.0%");
     expect(screen.getByText("AAPL").parentElement).not.toHaveTextContent("0.0%");

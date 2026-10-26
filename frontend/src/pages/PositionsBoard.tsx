@@ -11,6 +11,7 @@ import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { cn } from "@/lib/utils";
 import { formatIstTime } from "@/lib/istTime";
+import { formatFractionPercent } from "@/lib/formatters";
 
 // Live spot/IV re-price, not per-closed-trade data like AgentBoard.tsx's 60s wealth-curve
 // poll — a shorter interval keeps this genuinely "live" without hammering the OpenAlgo
@@ -22,10 +23,6 @@ function fmtInr(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(0)}%`;
-}
 
 function LegsTable({ legs }: { legs: LivePositionGroup["legs"] }) {
   if (legs.length === 0) return null;
@@ -65,7 +62,7 @@ function PositionCard({ group }: { group: LivePositionGroup }) {
           <div className="text-xs text-muted-foreground">
             Live spot {fmtInr(group.live_spot)} · IV{" "}
             {group.live_iv_pct != null && Number.isFinite(group.live_iv_pct) ? `${group.live_iv_pct.toFixed(1)}%` : "—"} · POP{" "}
-            {fmtPct(group.probability_of_profit)}
+            {formatFractionPercent(group.probability_of_profit)}
           </div>
         </div>
         <div

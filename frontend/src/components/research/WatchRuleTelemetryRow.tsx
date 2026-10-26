@@ -1,17 +1,12 @@
 import type { WatchRuleTelemetry } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatSignedPercent } from "@/lib/formatters";
 
 function fmtInr(value: number | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return `₹${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
-function fmtPct(value: number | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
-}
 
 function currentValueText(rule: WatchRuleTelemetry): string {
   const { metric, current, threshold, distance } = rule;
@@ -23,7 +18,7 @@ function currentValueText(rule: WatchRuleTelemetry): string {
       parts.push(`baseline ${fmtInr(current.baseline_ltp)}`);
     }
     if (current.move_pct != null) {
-      parts.push(fmtPct(current.move_pct));
+      parts.push(formatSignedPercent(current.move_pct));
     }
     if (distance.remaining != null && !distance.fired) {
       parts.push(`${distance.remaining.toFixed(2)}% to trigger`);
@@ -42,7 +37,7 @@ function currentValueText(rule: WatchRuleTelemetry): string {
 
   if (metric === "oi_change_pct" || metric === "volume_spike_pct") {
     const field = metric === "oi_change_pct" ? current.oi : current.volume;
-    const parts = [`${field ?? "—"}`, fmtPct(current.move_pct)];
+    const parts = [`${field ?? "—"}`, formatSignedPercent(current.move_pct)];
     if (distance.remaining != null && !distance.fired) {
       parts.push(`${distance.remaining.toFixed(2)}% to trigger`);
     }

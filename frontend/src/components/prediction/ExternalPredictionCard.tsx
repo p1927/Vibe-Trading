@@ -9,6 +9,7 @@ import { resolveApiBase } from "@/lib/apiBase";
 import { canApproveNavigationPath, fmtLevel, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 import { safeHttpUrl } from "@/lib/safeUrl";
+import { formatSignedPercent } from "@/lib/formatters";
 
 const DIRECTION_COLORS: Record<string, string> = {
   bullish: "#22c55e",
@@ -23,10 +24,6 @@ const KIND_LABELS: Record<string, string> = {
   derived: "Derived",
 };
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return "—";
@@ -256,7 +253,7 @@ export function ExternalPredictionCard({
             <p>
               Range: {fmtLevel(record.target?.low)} – {fmtLevel(record.target?.high)}
             </p>
-            <p>Expected return: {fmtPct(record.expected_return_pct)}</p>
+            <p>Expected return: {formatSignedPercent(record.expected_return_pct)}</p>
             <p>Target date: {fmtDate(record.target_date)}</p>
           </div>
           <div className="flex flex-col gap-2 text-[12px]">

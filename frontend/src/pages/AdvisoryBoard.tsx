@@ -6,9 +6,10 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { AdvisoryCandidateDetailModal } from "@/components/board/AdvisoryCandidateDetailModal";
-import { fmtExitPlan, fmtInr, fmtPct, fmtRatio, toneFor } from "@/lib/advisoryFormat";
+import { fmtExitPlan, fmtInr, fmtRatio, toneFor } from "@/lib/advisoryFormat";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { cn } from "@/lib/utils";
+import { formatFractionPercent } from "@/lib/formatters";
 
 // Mirrors AgentBoard.tsx's poll cadence — candidate scoring reads local cached research +
 // a single ledger parquet read, cheap enough to poll but no reason to hammer it faster than
@@ -24,7 +25,7 @@ function ConfidenceBanner({ ticker, data }: { ticker: string; data: AdvisoryCand
         Direction <span className="font-medium text-foreground">{c.direction ?? "—"}</span>
       </span>
       <span>
-        Confidence <span className="font-medium text-foreground">{fmtPct(c.confidence)}</span>
+        Confidence <span className="font-medium text-foreground">{formatFractionPercent(c.confidence)}</span>
       </span>
       {c.is_stale && <span className="text-amber-600 dark:text-amber-400">stale prediction</span>}
     </div>

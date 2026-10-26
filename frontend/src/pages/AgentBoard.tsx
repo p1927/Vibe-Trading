@@ -21,6 +21,7 @@ import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlC
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { formatIst } from "@/lib/istTime";
+import { formatFractionPercent } from "@/lib/formatters";
 
 const CANDIDATE_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1"];
 
@@ -34,10 +35,6 @@ function fmtInr(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(0)}%`;
-}
 
 /** What a queue entry changes: a number for a weight, the guidance line for an agent_guidance entry. */
 function proposalChange(p: PendingWeightProposal): string {
@@ -708,7 +705,7 @@ export function AgentBoard() {
             />
             <StatCard
               label="Choice alignment rate"
-              value={fmtPct(summary?.alignment.alignment_rate)}
+              value={formatFractionPercent(summary?.alignment.alignment_rate)}
             />
           </div>
 
@@ -803,7 +800,7 @@ export function AgentBoard() {
                   />
                   <StatCard
                     label="Regret-free rate"
-                    value={fmtPct(decisionQuality.regret_free_rate)}
+                    value={formatFractionPercent(decisionQuality.regret_free_rate)}
                   />
                   <StatCard
                     label="Confidence Brier"
@@ -817,7 +814,7 @@ export function AgentBoard() {
                 {decisionQuality.unscored_coverage != null &&
                 decisionQuality.unscored_coverage > 0 ? (
                   <p className="text-[11px] text-muted-foreground">
-                    {fmtPct(decisionQuality.unscored_coverage)} of decisions could not be
+                    {formatFractionPercent(decisionQuality.unscored_coverage)} of decisions could not be
                     graded ({decisionQuality.decisions_scored} of{" "}
                     {decisionQuality.decisions_total} scored) — the numbers above cover only
                     the graded ones.
@@ -920,7 +917,7 @@ export function AgentBoard() {
                           {entry.value_before.toFixed(3)} → {entry.value_after.toFixed(3)}
                         </td>
                         <td className="px-3 py-2">
-                          {fmtPct(entry.performance_before.win_rate)} → {fmtPct(entry.performance_after.win_rate)}
+                          {formatFractionPercent(entry.performance_before.win_rate)} → {formatFractionPercent(entry.performance_after.win_rate)}
                         </td>
                         <td className="px-3 py-2">
                           {fmtInr(entry.performance_before.net_pnl)} → {fmtInr(entry.performance_after.net_pnl)}

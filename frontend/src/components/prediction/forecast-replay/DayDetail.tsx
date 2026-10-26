@@ -2,8 +2,8 @@ import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
 import { actualReturnPct, forecastReturnPct, keyPoint } from "@/lib/forecastReplay/view";
 import { fmtNiftyLevel } from "@/lib/factorHistoryUtils";
-import { fmtPct } from "@/lib/trackScoreboardUtils";
 import { RecordBadges, SameForecastNote } from "./RecordBadges";
+import { formatSignedPercent } from "@/lib/formatters";
 
 interface Props {
   records: ReplayRecord[];
@@ -44,12 +44,12 @@ export function DayDetail({ records, horizon, styles }: Props) {
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">{fmtNiftyLevel(r.spot_at_issue)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">
-                  {fmtNiftyLevel(p.p50_level)} <span className="text-muted-foreground">{p.horizon_days}d</span> <span className="text-muted-foreground">{fmtPct(forecastReturnPct(r, horizon))}</span>
+                  {fmtNiftyLevel(p.p50_level)} <span className="text-muted-foreground">{p.horizon_days}d</span> <span className="text-muted-foreground">{formatSignedPercent(forecastReturnPct(r, horizon))}</span>
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">{p.target_date}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{actualPct != null ? fmtPct(actualPct) : r.points.some((q) => q.matured) ? `Pending (${r.points.filter((q) => q.matured).length}/${r.points.length} points matured)` : "Pending"}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{actualPct != null ? formatSignedPercent(actualPct) : r.points.some((q) => q.matured) ? `Pending (${r.points.filter((q) => q.matured).length}/${r.points.length} points matured)` : "Pending"}</td>
                 <td className={`px-2 py-1 text-right tabular-nums ${p.error_pct != null ? (p.in_band === false ? "text-amber-700 dark:text-amber-400" : "") : ""}`}>
-                  {p.error_pct != null ? fmtPct(p.error_pct) : "—"}
+                  {p.error_pct != null ? formatSignedPercent(p.error_pct) : "—"}
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">
                   {p.in_band == null ? "—" : p.in_band ? "inside" : "outside"}

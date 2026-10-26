@@ -4,13 +4,8 @@ import type { IndexBacktestReport } from "@/lib/api";
 import { NiftyHistoricalChart } from "@/components/charts/NiftyHistoricalChart";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 import { formatIst } from "@/lib/istTime";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatSignedPercent } from "@/lib/formatters";
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
 
 interface Props {
   report: IndexBacktestReport | null;
@@ -140,7 +135,7 @@ export function BacktestEvaluationPanel({
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="text-[11px]">
           <span className="text-muted-foreground">Out-of-sample MAE</span>
-          <p className="text-lg font-semibold tabular-nums">{fmtPct(metrics.mae_pct)}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatSignedPercent(metrics.mae_pct)}</p>
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">Direction hit rate</span>
@@ -172,7 +167,7 @@ export function BacktestEvaluationPanel({
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">Train MAE</span>
-          <p className="text-lg font-semibold tabular-nums">{fmtPct(metrics.in_sample_mae_pct)}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatSignedPercent(metrics.in_sample_mae_pct)}</p>
         </div>
       </div>
 
@@ -249,12 +244,12 @@ export function BacktestEvaluationPanel({
                         <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
                         <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.spot, { maximumFractionDigits: 0 })}</td>
                         <td className="py-1.5 pr-3 tabular-nums text-red-600 dark:text-red-400">
-                          {fmtPct(row.realized_1d_pct)}
+                          {formatSignedPercent(row.realized_1d_pct)}
                         </td>
                         <td className="py-1.5 text-muted-foreground">
                           {topDrivers.length
                             ? topDrivers
-                                .map((d) => `${d.label}: ${fmtPct(d.change_pct)}`)
+                                .map((d) => `${d.label}: ${formatSignedPercent(d.change_pct)}`)
                                 .join(" · ")
                             : "—"}
                         </td>
@@ -269,7 +264,7 @@ export function BacktestEvaluationPanel({
                                 <ul className="space-y-0.5">
                                   {(row.factor_drivers ?? []).map((d) => (
                                     <li key={d.factor}>
-                                      {d.label}: {d.prev} → {d.current} ({fmtPct(d.change_pct)})
+                                      {d.label}: {d.prev} → {d.current} ({formatSignedPercent(d.change_pct)})
                                     </li>
                                   ))}
                                 </ul>
@@ -281,8 +276,8 @@ export function BacktestEvaluationPanel({
                                     {row.worst_contributors!.map((c) => (
                                       <li key={c.symbol}>
                                         <span className="font-medium">{c.symbol}</span>{" "}
-                                        {fmtPct(c.return_1d_pct)} (wt {c.weight_pct?.toFixed(1)}% →{" "}
-                                        {fmtPct(c.index_contribution_pct)} on index)
+                                        {formatSignedPercent(c.return_1d_pct)} (wt {c.weight_pct?.toFixed(1)}% →{" "}
+                                        {formatSignedPercent(c.index_contribution_pct)} on index)
                                         {(c.headlines ?? []).length ? (
                                           <ul className="ml-2 mt-0.5 text-muted-foreground">
                                             {c.headlines!.map((h) => (
@@ -355,11 +350,11 @@ export function BacktestEvaluationPanel({
                       <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.spot, { maximumFractionDigits: 0 })}</td>
                       <td className="py-1.5 pr-3 tabular-nums">
-                        {fmtPct(row.predicted_return_pct)}
+                        {formatSignedPercent(row.predicted_return_pct)}
                         <span className="ml-1 text-muted-foreground">→ {formatNumber(row.implied_level, { maximumFractionDigits: 0 })}</span>
                       </td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_forward_return_pct)}</td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.error_pct)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.actual_forward_return_pct)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.error_pct)}</td>
                       <td className="py-1.5">{row.direction_correct == null ? "—" : row.direction_correct ? "✓" : "✗"}</td>
                     </tr>
                     {open ? (
@@ -391,7 +386,7 @@ export function BacktestEvaluationPanel({
                               <ul className="space-y-0.5">
                                 {(row.factor_drivers ?? []).map((d) => (
                                   <li key={d.factor}>
-                                    {d.label}: {d.prev} → {d.current} ({fmtPct(d.change_pct)})
+                                    {d.label}: {d.prev} → {d.current} ({formatSignedPercent(d.change_pct)})
                                   </li>
                                 ))}
                               </ul>
@@ -404,7 +399,7 @@ export function BacktestEvaluationPanel({
                                 <ul className="space-y-0.5">
                                   {row.factor_delta_horizon!.map((d) => (
                                     <li key={d.factor}>
-                                      {d.label}: {d.t0} → {d.t1} (Δ {fmtPct(d.delta)})
+                                      {d.label}: {d.t0} → {d.t1} (Δ {formatSignedPercent(d.delta)})
                                     </li>
                                   ))}
                                 </ul>
@@ -424,7 +419,7 @@ export function BacktestEvaluationPanel({
                                 <p className="text-muted-foreground">No flagged calendar events</p>
                               )}
                               <p className="mt-2 text-muted-foreground">
-                                1d realized move: {fmtPct(row.realized_1d_pct)}
+                                1d realized move: {formatSignedPercent(row.realized_1d_pct)}
                               </p>
                             </div>
                           </div>

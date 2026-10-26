@@ -6,17 +6,13 @@ import { api } from "@/lib/api";
 import type { IndiaOptionsSource, PopOverlayResponse, PopOverlayRow } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
 import { PopOverlayChart } from "@/components/charts/PopOverlayChart";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatFractionPercent } from "@/lib/formatters";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const DEFAULT_TICKER = "NIFTY";
 const MIN_HORIZON = 1;
 const MAX_HORIZON = 60;
 
-function fmtPct(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
-}
 
 function ChainRow({ row }: { row: PopOverlayRow }) {
   const pop = row.pop;
@@ -39,7 +35,7 @@ function ChainRow({ row }: { row: PopOverlayRow }) {
       <td className="py-1 pr-2 tabular-nums">{formatNumber(row.bid, { maximumFractionDigits: 2 })}</td>
       <td className="py-1 pr-2 tabular-nums">{formatNumber(row.ask, { maximumFractionDigits: 2 })}</td>
       <td className="py-1 pr-2 tabular-nums font-medium">
-        {pop ? fmtPct(pop.probability_of_profit) : "–"}
+        {pop ? formatFractionPercent(pop.probability_of_profit) : "–"}
       </td>
       <td className="py-1 pr-2 tabular-nums">{pop ? formatNumber(pop.expected_pnl, { maximumFractionDigits: 2 }) : "–"}</td>
       <td className="py-1 pr-2 tabular-nums text-muted-foreground">

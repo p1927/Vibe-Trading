@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AdvisoryCandidate, AdvisoryCandidateDetailResponse } from "@/lib/api";
-import { fmtExitPlan, fmtInr, fmtPct, fmtPctScale, fmtRatio } from "@/lib/advisoryFormat";
+import { fmtExitPlan, fmtInr, fmtPctScale, fmtRatio } from "@/lib/advisoryFormat";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
+import { formatFractionPercent } from "@/lib/formatters";
 
 interface Props {
   ticker: string;
@@ -135,7 +136,7 @@ export function AdvisoryCandidateDetailModal({ ticker, candidate, approving, onC
                 </span>
                 <span>
                   Confidence{" "}
-                  <span className="font-medium text-foreground">{fmtPct(detail.prediction.confidence)}</span>
+                  <span className="font-medium text-foreground">{formatFractionPercent(detail.prediction.confidence)}</span>
                 </span>
               </div>
               {detail.rationale && <p>{detail.rationale}</p>}

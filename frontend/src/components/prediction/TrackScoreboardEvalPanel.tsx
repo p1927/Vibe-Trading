@@ -3,12 +3,11 @@ import type { IndexTrackScoreboardReport } from "@/lib/api";
 import {
   computeTrackEvalStats,
   fmtHitRate,
-  fmtPct,
   scoreboardIds,
 } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatSignedPercent } from "@/lib/formatters";
 
 interface Props {
   report: IndexTrackScoreboardReport;
@@ -98,7 +97,7 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="text-[11px]">
           <span className="text-muted-foreground">Out-of-sample MAE</span>
-          <p className="text-lg font-semibold tabular-nums">{fmtPct(stats.maePct)}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatSignedPercent(stats.maePct)}</p>
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">Direction hit rate</span>
@@ -150,13 +149,13 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
                     <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
                     <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.close, { maximumFractionDigits: 0 })}</td>
                     <td className="py-1.5 pr-3 tabular-nums">
-                      {fmtPct(row.predicted_pct)}
+                      {formatSignedPercent(row.predicted_pct)}
                       {implied != null && Number.isFinite(implied) ? (
                         <span className="ml-1 text-muted-foreground">→ {formatNumber(implied, { maximumFractionDigits: 0 })}</span>
                       ) : null}
                     </td>
-                    <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_pct)}</td>
-                    <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.error_pct)}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.actual_pct)}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.error_pct)}</td>
                     <td className="py-1.5">
                       <span
                         className={cn(

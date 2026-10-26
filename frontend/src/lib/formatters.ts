@@ -91,6 +91,18 @@ export function formatNumber(value: number | null | undefined, options?: Intl.Nu
   return value.toLocaleString("en-IN", options);
 }
 
+/** A percent-scale value (`1.2` means 1.2%) with an explicit sign for gains: "+1.20%". Missing or non-finite is `missing`, never 0. */
+export function formatSignedPercent(value: number | null | undefined, digits = 2, missing = "—"): string {
+  if (value == null || !Number.isFinite(value)) return missing;
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`;
+}
+
+/** A fraction (`0.4` means 40%), en-IN formatted: "40%". Missing or non-finite is `missing`, never 0%. */
+export function formatFractionPercent(value: number | null | undefined, digits = 0, missing = "—"): string {
+  if (value == null || !Number.isFinite(value)) return missing;
+  return `${formatNumber(value * 100, { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+}
+
 export function abbreviateNum(v: number): string {
   const abs = Math.abs(v);
   if (abs >= 1e9) return (v / 1e9).toFixed(1) + "B";

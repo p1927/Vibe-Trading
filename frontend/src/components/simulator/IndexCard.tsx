@@ -1,5 +1,6 @@
 import { Line, LineChart, ReferenceLine, ResponsiveContainer } from "recharts";
 import { cn } from "@/lib/utils";
+import { formatSignedPercent } from "@/lib/formatters";
 
 export interface IndexCardProps {
   name: string;
@@ -28,10 +29,6 @@ function fmtChange(v: number | null): string {
   return `${v >= 0 ? "+" : ""}${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
-function fmtPct(v: number | null): string {
-  if (v == null || !Number.isFinite(v)) return "";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 /** Compact ticker card: name, price, change, and a chromeless sparkline —
  * the "quick glance" style used by the market-overview strip this mirrors. */
@@ -61,7 +58,7 @@ export function IndexCard({ name, price, change, changePct, sparkline, badge, lo
         <>
           <p className="mt-1 text-lg font-semibold tabular-nums">{fmtPrice(price)}</p>
           <p className={cn("text-xs tabular-nums", !known ? "text-muted-foreground" : up ? "text-emerald-600" : "text-red-600")}>
-            {fmtChange(change)} {fmtPct(changePct)}
+            {fmtChange(change)} {formatSignedPercent(changePct, 2, "")}
           </p>
           {points.length > 1 && (
             <div className="mt-2 h-10 w-full">

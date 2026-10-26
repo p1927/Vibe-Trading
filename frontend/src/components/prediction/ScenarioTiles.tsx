@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { formatSignedPercent } from "@/lib/formatters";
 
 interface Scenario {
   event?: string;
@@ -24,11 +25,6 @@ function fmtRange(raw: number[] | string | undefined): string | null {
   return null;
 }
 
-function fmtPct(v: number | null | undefined): string | null {
-  if (v == null || !Number.isFinite(v)) return null;
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
 
 function titleFor(s: Scenario): string {
   if (s.label?.trim()) return s.label;
@@ -81,7 +77,7 @@ export function ScenarioTiles({ scenarios = [], horizonDays = 14, reconciled }: 
         {sorted.map((s, i) => {
           const prob = s.probability;
           const range = fmtRange(s.index_range);
-          const midRet = fmtPct(s.midpoint_return_pct);
+          const midRet = Number.isFinite(s.midpoint_return_pct) ? formatSignedPercent(s.midpoint_return_pct) : null;
           const isTop = i === 0;
           return (
             <div

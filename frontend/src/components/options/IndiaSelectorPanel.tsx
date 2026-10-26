@@ -8,14 +8,10 @@ import type { SelectorCandidate, SelectorRankBy, SelectorResponseData } from "@/
 import { formatCurrency } from "@/lib/marketConfig";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatFractionPercent } from "@/lib/formatters";
 
 const DEFAULT_TICKER = "NIFTY";
 
-function fmtPct(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
-}
 
 function LegsTable({ legs }: { legs: SelectorCandidate["legs"] }) {
   const { t } = useTranslation();
@@ -94,7 +90,7 @@ function CandidateCard({
         <div>
           {t("options.india.pop", { defaultValue: "PoP" })}{" "}
           <span className="font-medium text-foreground">
-            {fmtPct(candidate.probability_of_profit)}
+            {formatFractionPercent(candidate.probability_of_profit)}
           </span>
         </div>
         <div>

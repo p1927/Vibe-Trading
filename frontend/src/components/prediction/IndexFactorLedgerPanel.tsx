@@ -1,14 +1,11 @@
 import type { IndexPredictionHistoryRow } from "@/lib/api";
+import { formatSignedPercent } from "@/lib/formatters";
 
 function fmtLevel(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 interface Props {
   daily: IndexPredictionHistoryRow[];
@@ -65,11 +62,11 @@ export function IndexFactorLedgerPanel({ daily, intraday = [], horizonDays = 14 
                 </td>
                 <td className="py-1.5 pr-2 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                 <td className="py-1.5 pr-2 tabular-nums">{fmtLevel(row.implied_level)}</td>
-                <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.expected_return_pct)}</td>
-                <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.bottom_up_return_pct)}</td>
-                <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.macro_delta_pct)}</td>
+                <td className="py-1.5 pr-2 tabular-nums">{formatSignedPercent(row.expected_return_pct)}</td>
+                <td className="py-1.5 pr-2 tabular-nums">{formatSignedPercent(row.bottom_up_return_pct)}</td>
+                <td className="py-1.5 pr-2 tabular-nums">{formatSignedPercent(row.macro_delta_pct)}</td>
                 <td className="py-1.5 pr-2 tabular-nums">
-                  {row.actual_return_pct != null ? fmtPct(row.actual_return_pct) : "—"}
+                  {row.actual_return_pct != null ? formatSignedPercent(row.actual_return_pct) : "—"}
                 </td>
                 <td className="py-1.5">
                   {row.direction_correct == null ? "—" : row.direction_correct ? "✓" : "✗"}

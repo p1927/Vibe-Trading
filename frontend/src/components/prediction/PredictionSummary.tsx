@@ -2,13 +2,8 @@ import { cn } from "@/lib/utils";
 import type { IndexPredictionArtifact } from "@/lib/api";
 import { tradeUiDeepLink } from "@/lib/trade-ui";
 import { formatIst } from "@/lib/istTime";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatSignedPercent } from "@/lib/formatters";
 
-function fmtPct(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
-}
 
 function viewTone(view: string | null | undefined): string {
   const v = (view || "").toLowerCase();
@@ -161,7 +156,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           No model view: the macro model has no out-of-sample edge over a zero forecast, so this headline is not a model
           forecast. It is the constituent roll-up plus the news and scenario overlays
           {pred.reconciled_with_scenarios && pred.raw_expected_return_pct != null && pred.scenario_anchor_return_pct != null
-            ? `, pulled 75% toward the hand-set scenario table (before ${fmtPct(pred.raw_expected_return_pct)}, anchor ${fmtPct(pred.scenario_anchor_return_pct)}, final ${fmtPct(pred.expected_return_pct)})`
+            ? `, pulled 75% toward the hand-set scenario table (before ${formatSignedPercent(pred.raw_expected_return_pct)}, anchor ${formatSignedPercent(pred.scenario_anchor_return_pct)}, final ${formatSignedPercent(pred.expected_return_pct)})`
             : ""}
           . Read it as a scenario view, not a prediction.
         </div>
@@ -172,17 +167,17 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
       pred.scenario_anchor_return_pct != null ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Headline blended with event scenarios (25% Ridge model · 75% scenario anchor). Ridge raw{" "}
-          {fmtPct(pred.raw_expected_return_pct)} → anchor {fmtPct(pred.scenario_anchor_return_pct)} → final{" "}
-          {fmtPct(pred.expected_return_pct)}. Macro attribution reflects the reconciled headline.
+          {formatSignedPercent(pred.raw_expected_return_pct)} → anchor {formatSignedPercent(pred.scenario_anchor_return_pct)} → final{" "}
+          {formatSignedPercent(pred.expected_return_pct)}. Macro attribution reflects the reconciled headline.
         </div>
       ) : null}
       {pred.debate_merged && pred.debate?.expected_return_pct != null ? (
         <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-200" data-testid="debate-blend">
           Headline includes agent debate blend (60% debate · 40% quant). The debate{" "}
           {pred.provenance?.debate_as_of ? `of ${String(pred.provenance.debate_as_of).slice(0, 10)} ` : ""}stated{" "}
-          {fmtPct(pred.debate.expected_return_pct)}
+          {formatSignedPercent(pred.debate.expected_return_pct)}
           {pred.debate.view ? ` (view ${pred.debate.view})` : ""}. Quant-only return was{" "}
-          {fmtPct(pred.quant?.expected_return_pct)}; displayed {fmtPct(pred.expected_return_pct)}. Equation
+          {formatSignedPercent(pred.quant?.expected_return_pct)}; displayed {formatSignedPercent(pred.expected_return_pct)}. Equation
           card shows quant macro coefficients.
         </div>
       ) : pred.debate_merged && !pred.debate ? (
@@ -259,7 +254,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         <StatCard
         label={`${horizonDays}d target (Nifty)`}
         value={formatNumber(targetLevel, { maximumFractionDigits: 0 })}
-        sub={`${fmtPct(expected)} from spot ${formatNumber(spot, { maximumFractionDigits: 0 })}`}
+        sub={`${formatSignedPercent(expected)} from spot ${formatNumber(spot, { maximumFractionDigits: 0 })}`}
         tone={viewTone(view)}
         flash={flashReturn}
       />
@@ -295,7 +290,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         value={halfWidth != null && Number.isFinite(Number(halfWidth)) ? `±${Number(halfWidth).toFixed(2)}%` : "—"}
         sub={
           pred.bottom_up_return_pct != null || pred.macro_delta_pct != null
-            ? `Bottom-up ${fmtPct(pred.bottom_up_return_pct)} · Macro ${fmtPct(pred.macro_delta_pct)}`
+            ? `Bottom-up ${formatSignedPercent(pred.bottom_up_return_pct)} · Macro ${formatSignedPercent(pred.macro_delta_pct)}`
             : undefined
         }
       />

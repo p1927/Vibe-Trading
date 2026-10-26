@@ -20,7 +20,7 @@ import { band, barDates, fitKey, focusRange, rangeAction, recordPath } from "@/l
 import { baseSeriesColors, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct } from "@/lib/forecastReplay/view";
-import { fmtPct } from "@/lib/trackScoreboardUtils";
+import { formatSignedPercent } from "@/lib/formatters";
 
 export interface ForecastReplayChartProps {
   /** Every record in the window (day markers); only `focusDays` are drawn as paths. */
@@ -201,7 +201,7 @@ export function ForecastReplayChart({
       const isAnchor = r.issue_day === anchorDay;
       dayMarkers.push({
         marker: { time: r.issue_day as Time, position: ret >= 0 ? "aboveBar" : "belowBar", shape: isAnchor ? "square" : "circle", color: style.color },
-        text: sourcesInWindow.size === 1 || (isAnchor && sourcesInWindow.size <= 4) ? fmtPct(ret) : undefined,
+        text: sourcesInWindow.size === 1 || (isAnchor && sourcesInWindow.size <= 4) ? formatSignedPercent(ret) : undefined,
         idx: barIdx.get(r.issue_day) ?? -1,
         priority: isAnchor,
       });
@@ -237,7 +237,7 @@ export function ForecastReplayChart({
             shape: "circle" as const,
             color: p.in_band === false ? t.downColor : p.in_band ? t.upColor : t.infoColor,
           },
-          text: fmtPct(p.error_pct),
+          text: formatSignedPercent(p.error_pct),
           idx: barIdx.get(p.target_date) ?? -1,
           priority: false,
         }));

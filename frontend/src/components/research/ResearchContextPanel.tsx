@@ -14,8 +14,7 @@ import {
   formatLegsSummary,
   shouldShowConfidence,
 } from "@/lib/planDisplay";
-import { formatNumber } from "@/lib/formatters";
-import { fmtPct } from "@/lib/advisoryFormat";
+import { formatNumber, formatFractionPercent } from "@/lib/formatters";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
@@ -249,7 +248,7 @@ export function ResearchContextPanel({
                       )}
                       {sc.probability != null && (
                         <span className="text-[10px] tabular-nums text-muted-foreground">
-                          {fmtPct(Number(sc.probability))} likely
+                          {formatFractionPercent(Number(sc.probability))} likely
                         </span>
                       )}
                     </div>

@@ -1,13 +1,14 @@
 import { Loader2, PanelRight, Play } from "lucide-react";
 import { useState } from "react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
-import { fmtHitRate, fmtPct, promotionCell, scoreboardIds } from "@/lib/trackScoreboardUtils";
+import { fmtHitRate, promotionCell, scoreboardIds } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
 import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
 import { TrackScoreboardReplaySection } from "@/components/prediction/TrackScoreboardReplaySection";
 import { cn } from "@/lib/utils";
 import { formatIst } from "@/lib/istTime";
+import { formatSignedPercent } from "@/lib/formatters";
 
 interface Props {
   report: IndexTrackScoreboardReport | null;
@@ -362,7 +363,7 @@ export function TrackScoreboardPanel({
                     ) : null}
                   </p>
                   <p className="tabular-nums text-base font-semibold">
-                    {unavailable ? "—" : fmtPct(r.expected_return_pct)}
+                    {unavailable ? "—" : formatSignedPercent(r.expected_return_pct)}
                   </p>
                   <p className="text-muted-foreground">{unavailable ? "—" : r.view ?? "—"}</p>
                 </div>
@@ -442,7 +443,7 @@ export function TrackScoreboardPanel({
                         <span className="ml-1 text-[9px] text-muted-foreground">(no backtest)</span>
                       ) : null}
                     </td>
-                    <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>
+                    <td className="py-1.5 pr-2 tabular-nums">{formatSignedPercent(row.mae_pct)}</td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
                     <td className="py-1.5 pr-2 tabular-nums text-emerald-600 dark:text-emerald-400">
                       {row.direction_hit_count ?? "—"}
@@ -464,7 +465,7 @@ export function TrackScoreboardPanel({
           </p>
           <p className="mb-2 text-[11px] text-muted-foreground">
             Quant baseline direction: {fmtHitRate(promo?.quant_direction_hit_rate)}
-            {promo?.quant_mae_pct != null ? ` · MAE ${fmtPct(promo.quant_mae_pct)}` : ""}
+            {promo?.quant_mae_pct != null ? ` · MAE ${formatSignedPercent(promo.quant_mae_pct)}` : ""}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[11px]">
@@ -534,7 +535,7 @@ export function TrackScoreboardPanel({
                     <td className="py-1.5 pr-2 font-medium">
                       {trackDisplayLabel(tid, report.track_catalog)}
                     </td>
-                    <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>
+                    <td className="py-1.5 pr-2 tabular-nums">{formatSignedPercent(row.mae_pct)}</td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
                     <td className="py-1.5 tabular-nums">{row.eval_count ?? "—"}</td>
                   </tr>
