@@ -81,7 +81,7 @@ def resolve_longbridge_credentials(
             conflict_fields = tuple(
                 field
                 for field in _CREDENTIAL_FIELDS
-                if not hmac.compare_digest(environment[field], runtime_file[field])
+                if not hmac.compare_digest(environment[field].encode(), runtime_file[field].encode())
             )
             if conflict_fields:
                 return CredentialResolution(
@@ -136,7 +136,7 @@ def _resolve_paper(
         fields = tuple("paper_access_token" if f == "access_token" else f for f in missing)
         return CredentialResolution(None, "environment", fields, ())
     live_tokens = (environment["access_token"], runtime_file["access_token"])
-    if any(t and hmac.compare_digest(t, paper_token) for t in live_tokens):
+    if any(t and hmac.compare_digest(t.encode(), paper_token.encode()) for t in live_tokens):
         return CredentialResolution(None, None, (), ("paper_access_token",))
     return CredentialResolution(LongbridgeCredentials(**values), "environment", (), ())
 

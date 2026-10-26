@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import sys
@@ -9,6 +10,8 @@ from typing import Any
 
 from src.trading.profiles import list_profiles, profile_by_id
 from src.trading.types import TradingProfile
+
+logger = logging.getLogger(__name__)
 
 RUNNER_CAPABILITY = "runner.manage.requires_mandate"
 
@@ -1300,7 +1303,7 @@ def _audit_live_cancel(profile, order_id, symbol, result, session_id) -> None:
         except TypeError:
             write_live_action(event)
     except Exception:  # noqa: BLE001 - auditing must never block a cancel
-        pass
+        logger.exception("live cancel audit write failed for order %s", order_id)
 
 
 def profile_supports_live_runner(profile: TradingProfile) -> bool:
