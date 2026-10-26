@@ -18,4 +18,12 @@ describe("RepeatIntervalPicker", () => {
     expect(screen.getByDisplayValue("07m")).toBeInTheDocument();
     expect(screen.getByDisplayValue("09h")).toBeInTheDocument();
   });
+
+  it("reads an out-of-range stored cron as Custom, not as a structured select", () => {
+    for (const bad of ["*/0 * * * *", "*/99 * * * *", "99 9 * * *", "5 25 * * *", "5 9 * * 9"]) {
+      const { unmount } = render(<RepeatIntervalPicker value={bad} onChange={() => {}} />);
+      expect(screen.getByDisplayValue("Custom")).toBeInTheDocument();
+      unmount();
+    }
+  });
 });
