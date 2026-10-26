@@ -242,7 +242,15 @@ class SessionService:
         return self.store.list_sessions(limit)
 
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session."""
+        """Delete a session.
+
+        Raises:
+            SessionBusyError: If a run is in flight (its next write would recreate ``messages.jsonl``
+                with no ``session.json``); cancel it first.
+        """
+        with self._inflight_lock:
+            if session_id in self._inflight:
+                raise SessionBusyError(f"Session {session_id} has a run in progress; cancel it before deleting")
         self.event_bus.clear(session_id)
         from src.provenance.store import get_provenance_store
 
@@ -295,6 +303,7 @@ class SessionService:
         if role == "user":
             self._reserve_session(session_id)
         handed_off = False
+        created_attempt: Optional[Attempt] = None
 
         try:
             message = Message(session_id=session_id, role=role, content=content)
@@ -312,6 +321,7 @@ class SessionService:
                 turn_kind=turn_kind,
             )
             self.store.create_attempt(attempt)
+            created_attempt = attempt
             session.config["include_shell_tools"] = include_shell_tools
             session.last_attempt_id = attempt.attempt_id
             if turn_kind is None:
@@ -336,6 +346,12 @@ class SessionService:
         finally:
             if role == "user" and not handed_off:
                 self._release_session(session_id)
+                if created_attempt is not None:  # a hook failed after create_attempt: do not leave it `pending`
+                    created_attempt.mark_failed(error="send_message failed before the run started")
+                    try:
+                        self.store.update_attempt(created_attempt)
+                    except Exception:
+                        logger.exception("could not mark attempt %s failed", created_attempt.attempt_id)
 
     async def _run_attempt_with_prefetch(
         self,
@@ -605,7 +621,10 @@ class SessionService:
             self._active_tasks.pop(session.session_id, None)
             self._user_cancel_requests.discard(session.session_id)
             self._release_session(session.session_id)
-            await self._finalize_autonomous_agent_turn(session)
+            try:
+                await self._finalize_autonomous_agent_turn(session)
+            except Exception:  # must not skip run_resend_guards or leave an unretrieved task exception
+                logger.exception("autonomous turn finalize failed for session %s", session.session_id)
         if resend_guard_tools is not None:
             await service_hooks.run_resend_guards(
                 self,

@@ -272,7 +272,7 @@ def test_get_scheduled_run_reads_off_loop(scheduled) -> None:
 
 def test_create_scheduled_run_writes_off_loop(scheduled) -> None:
     calls = _StoreCalls()
-    scheduled.install_store(upsert=calls.blocking(None))
+    scheduled.install_store(get=lambda _job_id: None, upsert=calls.blocking(None))
     endpoint = _endpoint("/scheduled-runs", "POST")
     request = scheduled.routes.CreateScheduledRunRequest(id=_JOB_ID, prompt="probe", schedule="3600000")
 

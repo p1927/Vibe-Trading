@@ -23,3 +23,21 @@ def test_shell_tools_require_registry_opt_in(monkeypatch: pytest.MonkeyPatch) ->
 
     assert "bash" in registry.tool_names
     assert "background_run" in registry.tool_names
+
+
+def test_tool_exception_text_is_redacted_for_the_model_and_state() -> None:
+    from src.agent.tools import BaseTool, ToolRegistry
+
+    class _Boom(BaseTool):
+        name = "boom"
+        description = "x"
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        def execute(self, **kwargs):
+            raise RuntimeError("401 for url: https://api.example.com/v1/q?apikey=SUPERSECRET1234567890&x=1")
+
+    registry = ToolRegistry()
+    registry.register(_Boom())
+    out = registry.execute("boom", {})
+    assert "SUPERSECRET1234567890" not in out
+    assert '"status": "error"' in out

@@ -557,7 +557,10 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        deleted = await asyncio.to_thread(svc.delete_session, session_id)
+        try:
+            deleted = await asyncio.to_thread(svc.delete_session, session_id)
+        except SessionBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         await asyncio.to_thread(_get_goal_store().delete_session_goals, session_id)

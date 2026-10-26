@@ -21,6 +21,9 @@ class _DummyIndex:
     def index_message(self, session_id: str, role: str, content: str) -> None:
         del session_id, role, content
 
+    def delete_session(self, session_id: str) -> None:
+        del session_id
+
 
 def _service(tmp_path: Path, monkeypatch) -> SessionService:
     monkeypatch.setattr("src.session.service.get_shared_index", lambda: _DummyIndex())
@@ -485,3 +488,33 @@ def test_failed_run_does_not_re_prompt(tmp_path, monkeypatch):
         assert calls == []
 
     asyncio.run(scenario())
+
+
+def test_hook_failure_after_create_attempt_does_not_leave_a_pending_attempt(tmp_path, monkeypatch):
+    from src.session import service_hooks
+
+    service = _service(tmp_path, monkeypatch)
+    session = service.create_session(title="t")
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("hook exploded")
+
+    monkeypatch.setattr(service_hooks, "maybe_mark_autonomous_user_turn", _boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(service.send_message(session.session_id, "hello"))
+    attempts = service.store.list_attempts()
+    assert len(attempts) == 1 and attempts[0].status == AttemptStatus.FAILED
+    assert session.session_id not in service._inflight
+
+
+def test_delete_is_refused_while_a_run_is_in_flight(tmp_path, monkeypatch):
+    """Deleting a running session would let the run's next write recreate messages.jsonl with no session.json."""
+    service = _service(tmp_path, monkeypatch)
+    session = service.create_session(title="t")
+    service._reserve_session(session.session_id)
+    with pytest.raises(SessionBusyError):
+        service.delete_session(session.session_id)
+    assert service.get_session(session.session_id) is not None
+    service._release_session(session.session_id)
+    assert service.delete_session(session.session_id) is True
+    assert service.get_session(session.session_id) is None

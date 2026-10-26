@@ -69,13 +69,15 @@ export function MarketRecordingPanel({
         setFxMoneyFlowSymbols(moneyFlow);
         setSelectedSymbols(new Set(currency.map((s) => s.key)));
       })
-      .catch((err) => setSyncError(`Symbol list unavailable (${errorText(err, "request failed")}) - nothing can be started.`));
+      .catch((err) => setSymbolsError(`Symbol list unavailable (${errorText(err, "request failed")}) - nothing can be started.`));
   }, [kind]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Failed background reads: an empty/old jobs list would otherwise read as "nothing recording".
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Own state: the 10 s status poll clears syncError on success, which must not hide a failed symbol-list load.
+  const [symbolsError, setSymbolsError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -175,6 +177,11 @@ export function MarketRecordingPanel({
       </div>
 
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+      {symbolsError ? (
+        <p role="alert" data-testid="market-recording-symbols-error" className="text-[11px] text-amber-700 dark:text-amber-300">
+          {symbolsError}
+        </p>
+      ) : null}
       {syncError ? (
         <p role="alert" data-testid="market-recording-sync-error" className="text-[11px] text-amber-700 dark:text-amber-300">
           {syncError}

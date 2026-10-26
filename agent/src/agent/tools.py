@@ -135,9 +135,11 @@ class ToolRegistry:
             return tool.execute(**unwrap_item_arrays(params, tool.parameters))
         except Exception as exc:
             logger.exception("Tool %s failed", name)
+            from src.tools.redaction import redact_text  # a loader's HTTPError carries ?token=/apikey= in its URL
+
             return json.dumps({
                 "status": "error", "tool": name,
-                "error": str(exc),
+                "error": redact_text(str(exc)),
             }, ensure_ascii=False)
 
     @property
