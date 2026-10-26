@@ -52,15 +52,16 @@ logger = logging.getLogger(__name__)
 
 def _job_display_label(job: ScheduledResearchJob) -> str:
     job_type = str(job.config.get("job_type") or "")
-    base = JOB_LABELS.get(job_type, job_type or job.id)
+    label = JOB_LABELS.get(job_type, job_type or job.id)
     mode = str(job.config.get("mode") or "").strip().lower()
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY and mode:
-        suffix = {"drain": " (drain)", "maintenance": " (maintenance)", "full": " (full)"}.get(mode, f" ({mode})")
-        return f"{base}{suffix}"
-    ingest_mode = str(job.config.get("mode") or "").strip().lower()
-    if job_type == JOB_TYPE_HUB_NEWS_INGEST and ingest_mode:
-        return f"{base} ({ingest_mode})"
-    return base
+        label += {"drain": " (drain)", "maintenance": " (maintenance)", "full": " (full)"}.get(mode, f" ({mode})")
+    elif job_type == JOB_TYPE_HUB_NEWS_INGEST and mode:
+        label += f" ({mode})"
+    # One job per market shares a label ("Hub news ingest (full)" nine times): the market tells the rows apart.
+    # The India job carries no market; it is the unqualified one.
+    market = str(job.config.get("market") or "").strip().upper()
+    return f"{label} [{market}]" if market and market != "IN" else label
 
 
 def _entity_backpressure_threshold() -> int:
