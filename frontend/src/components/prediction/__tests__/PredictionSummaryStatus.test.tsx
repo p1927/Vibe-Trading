@@ -38,6 +38,25 @@ describe("PredictionSummary band", () => {
   });
 });
 
+describe("a headline with no macro model behind it", () => {
+  const blended = { reconciled_with_scenarios: true, raw_expected_return_pct: -2.79, scenario_anchor_return_pct: 0, expected_return_pct: -0.7 };
+
+  it("says there is no model view and does not call the overlay figure a Ridge number", () => {
+    const t = text(withPred({ ...blended, headline_basis: "no_model_edge" }));
+    expect(t).toContain("No model view");
+    expect(t).toContain("pulled 75% toward the hand-set scenario table");
+    expect(t).not.toContain("25% Ridge model");
+  });
+
+  it("a model-backed or unlabelled headline keeps the old blend banner and no warning", () => {
+    for (const basis of ["model", undefined]) {
+      const t = text(withPred({ ...blended, headline_basis: basis }));
+      expect(t).not.toContain("No model view");
+      expect(t).toContain("25% Ridge model");
+    }
+  });
+});
+
 describe("variants the first fix did not think of", () => {
   it("a band source this page does not know is named, not reported as 'not recorded'", () => {
     expect(bandSourceLabel({ band_source: "walk_forward_oos_v2" })).toBe("band source: walk_forward_oos_v2");

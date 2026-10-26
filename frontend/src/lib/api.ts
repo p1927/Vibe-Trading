@@ -3977,6 +3977,9 @@ export interface PlanPrediction {
   pcr?: number | null;
   source?: string | null;
   reconciled_with_scenarios?: boolean;
+  /** "model" or "no_model_edge" (the macro head is unserved: the headline is overlays plus the scenario table, not a model forecast); absent = unknown. */
+  headline_basis?: "model" | "no_model_edge" | null;
+  model_view_available?: boolean;
   scenario_anchor_return_pct?: number | null;
   raw_expected_return_pct?: number | null;
   raw_macro_delta_pct?: number | null;

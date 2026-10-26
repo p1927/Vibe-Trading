@@ -156,7 +156,18 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           ) : null}
         </p>
       ) : null}
-      {pred.reconciled_with_scenarios &&
+      {pred.headline_basis === "no_model_edge" ? (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200" data-testid="no-model-edge">
+          No model view: the macro model has no out-of-sample edge over a zero forecast, so this headline is not a model
+          forecast. It is the constituent roll-up plus the news and scenario overlays
+          {pred.reconciled_with_scenarios && pred.raw_expected_return_pct != null && pred.scenario_anchor_return_pct != null
+            ? `, pulled 75% toward the hand-set scenario table (before ${fmtPct(pred.raw_expected_return_pct)}, anchor ${fmtPct(pred.scenario_anchor_return_pct)}, final ${fmtPct(pred.expected_return_pct)})`
+            : ""}
+          . Read it as a scenario view, not a prediction.
+        </div>
+      ) : null}
+      {pred.headline_basis !== "no_model_edge" &&
+      pred.reconciled_with_scenarios &&
       pred.raw_expected_return_pct != null &&
       pred.scenario_anchor_return_pct != null ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
