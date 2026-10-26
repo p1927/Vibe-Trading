@@ -100,6 +100,23 @@ def test_create_generates_id_and_defaults_next_run_when_omitted(
     assert store.get(body["id"]) is not None
 
 
+@pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.RUNNING, JobStatus.COMPLETED])
+def test_create_with_an_existing_id_is_409_and_never_replaces_the_job(
+    client: TestClient, store: ScheduledResearchJobStore, status: JobStatus
+):
+    seeded = _seed(store, id="taken", prompt="original prompt", status=status)
+
+    response = client.post(
+        "/scheduled-runs",
+        json={"id": "taken", "prompt": "replacement prompt", "schedule": "300000"},
+    )
+
+    assert response.status_code == 409
+    assert status.value in response.json()["detail"]
+    kept = store.get("taken")
+    assert kept is not None and kept.prompt == seeded.prompt and kept.status == status
+
+
 def test_create_rejects_malformed_schedule_with_422(
     client: TestClient, store: ScheduledResearchJobStore
 ):

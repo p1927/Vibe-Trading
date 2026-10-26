@@ -679,6 +679,17 @@ def register_scheduled_routes(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        # An explicit id must not silently replace a job that already exists (a RUNNING one included): the
+        # executor's lifecycle write would then race the replacement. Replace = delete, then create.
+        # ponytail: check-then-upsert is not atomic; two simultaneous creates of one new id can still collide.
+        if request.id is not None:
+            existing = await asyncio.to_thread(_get_scheduled_research_store().get, request.id)
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"scheduled run {request.id!r} already exists (status {existing.status.value}); delete it first",
+                )
+
         now_ms = int(time.time() * 1000)
         next_run_at = request.next_run_at
         if next_run_at is None:

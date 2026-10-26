@@ -67,9 +67,16 @@ async def fetch_india_chain(
     replaces in ``options_chain()``."""
     kwargs: dict[str, Any] = {"ticker": ticker}
     if expiration is not None:
-        kwargs["expiry_date"] = datetime.fromtimestamp(
-            expiration, tz=timezone.utc
-        ).strftime("%Y-%m-%d")
+        try:
+            kwargs["expiry_date"] = datetime.fromtimestamp(
+                expiration, tz=timezone.utc
+            ).strftime("%Y-%m-%d")
+        except (OverflowError, OSError, ValueError):
+            # an absurd epoch is the caller's mistake, not a server fault
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "error": f"expiration {expiration} is not a valid epoch timestamp"},
+            )
     if source:
         kwargs["source"] = source
 

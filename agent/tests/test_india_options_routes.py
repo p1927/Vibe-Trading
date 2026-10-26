@@ -50,6 +50,15 @@ def test_underlyings_returns_tool_data(client: TestClient, monkeypatch: pytest.M
     assert body["data"]["indexes"] == ["NIFTY", "BANKNIFTY"]
 
 
+@pytest.mark.parametrize("bad", [10**18, -(10**18), 2**63])
+def test_chain_with_an_absurd_expiration_epoch_is_400_not_500(bad: int) -> None:
+    import asyncio
+
+    response = asyncio.run(india_options_routes.fetch_india_chain("NIFTY", bad, None))
+    assert response.status_code == 400
+    assert json.loads(response.body)["ok"] is False
+
+
 def test_underlyings_passes_through_source_query_param(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

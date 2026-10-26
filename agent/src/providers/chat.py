@@ -58,38 +58,6 @@ def _text_content(content: Any) -> str:
             parts.append(block.text)
     return "".join(parts)
 
-logger = logging.getLogger(__name__)
-
-
-def _dedupe_finish_reason(raw: str) -> str:
-    """Relays (OpenRouter) emit finish_reason per chunk; AIMessageChunk.__add__
-    concatenates into 'stopstop', 'tool_callstool_calls', etc. Return the
-    canonical suffix so ReAct equality checks survive.
-    """
-    return next(
-        (m for m in ("tool_calls", "function_call", "content_filter", "length", "stop")
-         if raw.endswith(m)),
-        raw,
-    )
-
-
-def _text_content(content: Any) -> str:
-    """Normalize provider text or content blocks to plain assistant text."""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-
-    parts: list[str] = []
-    for block in content:
-        if isinstance(block, str):
-            parts.append(block)
-        elif isinstance(block, dict) and isinstance(block.get("text"), str):
-            parts.append(block["text"])
-        elif isinstance(getattr(block, "text", None), str):
-            parts.append(block.text)
-    return "".join(parts)
-
 
 @dataclass
 class ToolCallRequest:

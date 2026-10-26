@@ -312,6 +312,23 @@ def _host_pressure_is_healthy(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _simulator_mode_is_live_without_a_service(monkeypatch):
+    """The agent loop's system prompt asks the stock simulator "live or replay?" (`agent_now_utc` ->
+    `simulator_status`), and the unchanged client opens a socket to whatever answers on :8902. With the dev
+    stack up that reply is a 401 "invalid control token" (a worktree has no `.env`), so every ChatLLM/AgentLoop
+    test failed on an up stack and passed on a down one, and the failure leaked observability writes into the
+    checkout. One default for the suite: live, no socket. A test that patches `simulator_status` (or any
+    layer above it) still wins; one that needs replay arms it itself."""
+    try:
+        from trade_integrations.stock_simulator import integration
+    except ImportError:
+        return
+    monkeypatch.setattr(
+        integration, "simulator_status", lambda: {"mode": "live", "clock": {"session_open": True}}
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_run_log_buffer():
     """Every test starts with an empty scheduled-job log buffer.
 
