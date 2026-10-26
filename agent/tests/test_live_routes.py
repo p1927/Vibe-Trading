@@ -25,6 +25,11 @@ import src.trading.service as trading_service
 @pytest.fixture
 def runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(paths, "get_runtime_root", lambda: tmp_path)
+    # `with TestClient(app)` runs the lifespan, whose watch-registry sync takes the real tier lock
+    # (`log/nautilus-watch.sync.lock`): point Trade's watch log dir at the tmp dir (tier_state_guard).
+    import trade_integrations.autonomous_agents.nautilus_watch as nautilus_watch
+
+    monkeypatch.setattr(nautilus_watch, "_log_dir", lambda: tmp_path)
     return tmp_path
 
 

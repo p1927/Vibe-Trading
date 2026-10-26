@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import time as _time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -57,6 +58,35 @@ def _text_content(content: Any) -> str:
         elif isinstance(getattr(block, "text", None), str):
             parts.append(block.text)
     return "".join(parts)
+
+
+_STREAM_END = object()
+
+
+def _iter_with_idle_timeout(chunks: Any, idle_timeout_s: Optional[float]) -> Any:
+    """Yield ``chunks``, raising ``TimeoutError`` when the next one takes longer than ``idle_timeout_s``.
+
+    The deadline is enforced while WAITING for a chunk (a stream that stalls forever never yields, so checking
+    on arrival, as this used to, never trips). The blocked reader thread is abandoned; the provider's own HTTP
+    timeout is what finally frees it.
+    """
+    iterator = iter(chunks)
+    if not idle_timeout_s:
+        yield from iterator
+        return
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-stream")
+    try:
+        while True:
+            try:
+                chunk = pool.submit(next, iterator, _STREAM_END).result(timeout=idle_timeout_s)
+            except _FutureTimeout:
+                # A bare TimeoutError lets the wrapper convert it into a retryable ProviderStreamError.
+                raise TimeoutError(f"no stream delta for {idle_timeout_s:.0f}s") from None
+            if chunk is _STREAM_END:
+                return
+            yield chunk
+    finally:
+        pool.shutdown(wait=False)
 
 
 @dataclass
@@ -582,17 +612,7 @@ class ChatLLM:
             provider, _ = self._runtime_provider_model()
             think_filter = ThinkBlockStreamFilter() if provider == "minimax" else None
             cancelled = False
-            last_chunk_ts = _time.monotonic()
-            for chunk in llm.stream(messages, config=config):
-                now = _time.monotonic()
-                if idle_timeout_s and now - last_chunk_ts > idle_timeout_s:
-                    # No delta for too long: the provider is stalled, not
-                    # thinking. Raising a bare TimeoutError lets the wrapper
-                    # below convert it into a retryable ProviderStreamError.
-                    raise TimeoutError(
-                        f"no stream delta for {idle_timeout_s:.0f}s"
-                    )
-                last_chunk_ts = now
+            for chunk in _iter_with_idle_timeout(llm.stream(messages, config=config), idle_timeout_s):
                 if should_cancel and should_cancel():
                     cancelled = True
                     break

@@ -390,3 +390,20 @@ def test_stream_idle_timeout_allows_a_flowing_stream() -> None:
     )
     assert response.content == "ab"
 
+
+def test_stream_idle_timeout_trips_while_waiting_when_no_chunk_ever_arrives() -> None:
+    """The deadline runs while waiting: a stream that goes silent and never yields again still fails."""
+    import time
+
+    class _SilentLLM(_FakeStreamingLLM):
+        def stream(self, messages, config=None):
+            yield _FakeChunk(content="first")
+            time.sleep(1.5)  # never yields again within the test's patience
+
+    client = _client(_SilentLLM())
+    started = time.monotonic()
+    with pytest.raises(ProviderStreamError) as excinfo:
+        client.stream_chat([{"role": "user", "content": "hi"}], idle_timeout_s=0.2)
+    assert excinfo.value.retryable is True
+    assert time.monotonic() - started < 1.2
+
