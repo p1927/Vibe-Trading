@@ -106,10 +106,9 @@ def _strip_blank_env_keys() -> list[str]:
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
+    # An unreadable env file that exists must not silently drop its layer: the process would run on
+    # schema defaults (a blank API_AUTH_KEY falls back to loopback trust). Let the OSError name the file.
+    lines = path.read_text(encoding="utf-8").splitlines()
 
     values: dict[str, str] = {}
     for raw in lines:

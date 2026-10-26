@@ -45,8 +45,8 @@ def load_agent_config(config_path: Path | None = None) -> AgentConfig:
         raw = _read_config_file(path)
         return AgentConfig.model_validate(raw)
     except (OSError, ValueError, ValidationError) as exc:
-        logger.warning(
-            "Failed to load agent config from %s: %s",
+        logger.error(
+            "Failed to load agent config from %s: %s (ALL MCP servers incl. the broker are dropped)",
             path,
             type(exc).__name__,
         )

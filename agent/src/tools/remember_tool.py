@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from src.agent.tools import BaseTool
 from src.memory.lifecycle import MemoryLifecycle
 from src.memory.persistent import PersistentMemory
+
+logger = logging.getLogger(__name__)
 
 
 class RememberTool(BaseTool):
@@ -151,7 +154,7 @@ class RememberTool(BaseTool):
                             {"target": t, "score": round(s, 2)} for t, s in relations[:3]
                         ]
             except Exception:
-                pass
+                logger.warning("memory semantic-links read failed", exc_info=True)
 
         return json.dumps(
             {"status": "ok", "count": len(results), "memories": results},

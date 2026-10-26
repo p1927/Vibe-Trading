@@ -706,7 +706,7 @@ class PersistentMemory:
                 logger.warning(
                     "add(%s): lock timeout, best-effort write", stripped_name
                 )
-            path.write_text(frontmatter, encoding="utf-8")
+            atomic_write_text(path, frontmatter)
             self._update_index(stripped_name, filename, description or stripped_name)
             from src.memory.versioning import commit as _git_commit
             _git_commit(self._dir, [path, self._index_path], f"add: {stripped_name}")
@@ -802,12 +802,10 @@ class PersistentMemory:
         else:
             text = new_line
 
-        self._index_path.write_text(text, encoding="utf-8")
+        atomic_write_text(self._index_path, text)
 
     def _rebuild_index(self) -> None:
         """Rebuild MEMORY.md from all existing entry files."""
         entries = self._scan_entries()
         lines = [f"- [{e.title}]({e.path.name}) — {e.description}" for e in entries]
-        self._index_path.write_text(
-            "\n".join(lines[:MAX_INDEX_LINES]), encoding="utf-8"
-        )
+        atomic_write_text(self._index_path, "\n".join(lines[:MAX_INDEX_LINES]))
