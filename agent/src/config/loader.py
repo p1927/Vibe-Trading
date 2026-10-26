@@ -45,12 +45,14 @@ def load_agent_config(config_path: Path | None = None) -> AgentConfig:
         raw = _read_config_file(path)
         return AgentConfig.model_validate(raw)
     except (OSError, ValueError, ValidationError) as exc:
-        logger.warning(
-            "Failed to load agent config from %s: %s",
+        # Every MCP server (OpenAlgo included) is dropped with the whole file: say so at error level, with the
+        # reason (validation messages carry field names, not values).
+        logger.error(
+            "Failed to load agent config from %s; ALL MCP servers are disabled until it is fixed: %s: %s",
             path,
             type(exc).__name__,
+            exc,
         )
-        logger.debug("Agent config load error details: %s", exc)
         return AgentConfig()
 
 

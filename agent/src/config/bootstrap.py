@@ -106,10 +106,8 @@ def _strip_blank_env_keys() -> list[str]:
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
+    # An unreadable layer that exists must fail loud: dropping it silently runs the process on schema defaults.
+    lines = path.read_text(encoding="utf-8").splitlines()
 
     values: dict[str, str] = {}
     for raw in lines:

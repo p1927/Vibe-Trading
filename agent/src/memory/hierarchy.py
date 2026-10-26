@@ -458,6 +458,14 @@ def archive_destination(base_dir: Path, archive_dir: Path, source_path: Path) ->
     except OSError:
         parent = source_path.parent
         base = base_dir
-    if parent != base and parent.name in CATEGORIES:
-        return archive_dir / parent.name / source_path.name
-    return archive_dir / source_path.name
+    dest = (
+        archive_dir / parent.name / source_path.name
+        if parent != base and parent.name in CATEGORIES
+        else archive_dir / source_path.name
+    )
+    # Archiving the same title twice must not rename over (and lose) the older archived body.
+    n = 1
+    while dest.exists():
+        dest = dest.with_name(f"{source_path.stem}.{n}{source_path.suffix}")
+        n += 1
+    return dest

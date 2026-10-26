@@ -268,13 +268,13 @@ class CompressionPipeline:
             logger.warning("Cannot archive non-existent file: %s", entry_path)
             return None
 
+        from src.memory.hierarchy import archive_destination
+        archive_path = archive_destination(
+            self._memory_dir, self._archive_dir, entry_path
+        )
+        tmp_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
         try:
-            from src.memory.hierarchy import archive_destination
-            archive_path = archive_destination(
-                self._memory_dir, self._archive_dir, entry_path
-            )
             archive_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
 
             # Atomic copy: write to tmp then rename
             shutil.copy2(str(entry_path), str(tmp_path))
@@ -285,10 +285,6 @@ class CompressionPipeline:
         except OSError as exc:
             logger.error("Archive failed for %s: %s", entry_path, exc)
             # Clean up tmp file if it exists
-            from src.memory.hierarchy import archive_destination
-            tmp_path = archive_destination(
-                self._memory_dir, self._archive_dir, entry_path
-            ).with_suffix(entry_path.suffix + ".tmp")
             if tmp_path.exists():
                 try:
                     tmp_path.unlink()

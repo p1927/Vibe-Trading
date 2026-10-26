@@ -239,7 +239,7 @@ class MemorySearchIndex:
                 )
                 conn.commit()
             except sqlite3.OperationalError as exc:
-                logger.debug("index_entry failed for %s: %s", entry_id, exc)
+                logger.warning("FTS index_entry failed for %s (index drifts until rebuild_search_index): %s", entry_id, exc)
 
     def remove_entry(self, entry_id: str) -> None:
         """Remove an entry from the index by ID."""
@@ -249,7 +249,7 @@ class MemorySearchIndex:
                 conn.execute("DELETE FROM memories WHERE id = ?", (entry_id,))
                 conn.commit()
             except sqlite3.OperationalError as exc:
-                logger.debug("remove_entry failed for %s: %s", entry_id, exc)
+                logger.warning("FTS remove_entry failed for %s (index drifts until rebuild_search_index): %s", entry_id, exc)
 
     def search(self, query: str, max_results: int = 5) -> List[MemoryMatch]:
         """Full-text search with FTS5 MATCH.

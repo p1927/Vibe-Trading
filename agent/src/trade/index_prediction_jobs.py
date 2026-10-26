@@ -236,6 +236,8 @@ def pause_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | N
     if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
         return {"status": "error", "message": f"index job {job_id} not found"}
     job = set_job_enabled(job_id, False, store=store)
+    if job is None:  # deleted between the lookup above and the mutation
+        return {"status": "error", "message": f"index job {job_id} not found"}
     return {"status": "ok", "job": _serialize_job(job)}
 
 
@@ -253,6 +255,8 @@ def resume_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | 
     if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
         return {"status": "error", "message": f"index job {job_id} not found"}
     job = set_job_enabled(job_id, True, store=store)
+    if job is None:  # deleted between the lookup above and the mutation
+        return {"status": "error", "message": f"index job {job_id} not found"}
     # One transaction, field-scoped write: the whole-record `upsert` of the snapshot `set_job_enabled`
     # returned reverted any run state the executor wrote since, and could demote a run that had just started.
     with store.transaction():
