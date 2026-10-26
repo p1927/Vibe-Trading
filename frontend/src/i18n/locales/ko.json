@@ -1741,7 +1741,10 @@
       "footerHint": "저장하면 활성화된 계좌를 새로고침합니다.",
       "cancel": "취소",
       "save": "저장 후 새로고침",
-      "saving": "저장 중"
+      "saving": "저장 중",
+      "discardTitle": "저장하지 않은 변경 사항을 버리시겠습니까?",
+      "discardBody": "포트폴리오 계좌 편집 내용이 저장되지 않았습니다.",
+      "discard": "버리기"
     },
     "connections": {
       "title": "로컬 연결 센터",

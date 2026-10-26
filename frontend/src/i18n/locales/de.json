@@ -1741,7 +1741,10 @@
       "footerHint": "Nach dem Speichern werden die aktivierten Konten aktualisiert.",
       "cancel": "Abbrechen",
       "save": "Speichern und aktualisieren",
-      "saving": "Wird gespeichert"
+      "saving": "Wird gespeichert",
+      "discardTitle": "Nicht gespeicherte Änderungen verwerfen?",
+      "discardBody": "Ihre Änderungen an den Portfolio-Konten wurden nicht gespeichert.",
+      "discard": "Verwerfen"
     },
     "connections": {
       "title": "Lokale Verbindungszentrale",

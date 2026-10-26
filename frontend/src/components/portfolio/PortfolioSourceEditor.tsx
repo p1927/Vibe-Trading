@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, Plus, Save, Trash2, X } from "lucide-react";
 import { ConnectionCenter } from "@/components/portfolio/ConnectionCenter";
+import { useConfirm } from "@/components/common/useConfirm";
 import type {
   PortfolioSettings,
   PortfolioSourceCatalogItem,
@@ -31,18 +32,38 @@ export function PortfolioSourceEditor({ open, settings, catalog, saving, onClose
   const [connectionToAdd, setConnectionToAdd] = useState("");
   const [connectionCenterOpen, setConnectionCenterOpen] = useState(false);
 
+  const [confirm, confirmDialog] = useConfirm();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  // Copy the settings into the draft when the editor OPENS (or they first arrive), never when a parent refresh
+  // hands over a new `settings` object mid-edit: that silently threw the user's unsaved changes away.
+  const hasSettings = settings != null;
   useEffect(() => {
-    if (open && settings) {
-      setDraft({ ...settings, sources: settings.sources.map((source) => ({ ...source })) });
+    const current = settingsRef.current;
+    if (open && current) {
+      setDraft({ ...current, sources: current.sources.map((source) => ({ ...source })) });
     }
-  }, [open, settings]);
+  }, [open, hasSettings]);
+
+  const dirty = open && draft != null && settings != null && JSON.stringify(draft) !== JSON.stringify(settings);
+  // Backdrop click / Escape can throw an edit away by accident: ask first when there is one.
+  const requestClose = useCallback(async () => {
+    if (dirty && !(await confirm({
+      title: t("portfolio.editor.discardTitle"),
+      description: t("portfolio.editor.discardBody"),
+      confirmLabel: t("portfolio.editor.discard"),
+      tone: "destructive",
+    }))) return;
+    onClose();
+  }, [dirty, confirm, onClose, t]);
 
   useEffect(() => {
     if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") void requestClose(); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [open, onClose]);
+  }, [open, requestClose]);
 
   const available = useMemo(() => {
     const selected = new Set(draft?.sources.map((source) => source.connection_id) ?? []);
@@ -90,7 +111,8 @@ export function PortfolioSourceEditor({ open, settings, catalog, saving, onClose
     setConnectionToAdd("");
   };
 
-  return <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  return <div className="fixed inset-0 z-50 flex justify-end bg-black/35" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) void requestClose(); }}>
+    {confirmDialog}
     <section className="flex h-full w-full max-w-xl flex-col border-l bg-background shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="portfolio-source-editor-title">
       <header className="flex items-start justify-between border-b p-5">
         <div><h2 id="portfolio-source-editor-title" className="text-lg font-semibold">{t("portfolio.editor.title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("portfolio.editor.subtitle")}</p></div>

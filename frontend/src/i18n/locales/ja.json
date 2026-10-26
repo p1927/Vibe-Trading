@@ -1741,7 +1741,10 @@
       "footerHint": "保存すると有効な口座が更新されます。",
       "cancel": "キャンセル",
       "save": "保存して更新",
-      "saving": "保存中"
+      "saving": "保存中",
+      "discardTitle": "未保存の変更を破棄しますか？",
+      "discardBody": "ポートフォリオ口座の編集内容はまだ保存されていません。",
+      "discard": "破棄"
     },
     "connections": {
       "title": "ローカル接続センター",

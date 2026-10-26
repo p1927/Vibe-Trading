@@ -454,11 +454,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     );
     if (backend.length >= 2) return backend;
     if (!isOptions || !resolvedSpot || legs.length === 0) return backend;
-    const entryCharges = Number(
-      (charges.total as { total_charges?: number } | undefined)?.total_charges ??
-        charges.round_trip_charges ??
-        0,
-    );
+    const rawCharges =
+      (charges.total as { total_charges?: number } | undefined)?.total_charges ?? charges.round_trip_charges;
+    const entryCharges = rawCharges == null ? null : Number(rawCharges);
     return computePnlOverTimeSamples(
       legs,
       resolvedSpot,

@@ -1741,7 +1741,10 @@
       "footerHint": "Al guardar se actualizan las cuentas activas.",
       "cancel": "Cancelar",
       "save": "Guardar y actualizar",
-      "saving": "Guardando"
+      "saving": "Guardando",
+      "discardTitle": "¿Descartar los cambios sin guardar?",
+      "discardBody": "Tus cambios en las cuentas de la cartera no se han guardado.",
+      "discard": "Descartar"
     },
     "connections": {
       "title": "Centro de conexiones locales",

@@ -1741,7 +1741,10 @@
       "footerHint": "保存后将刷新已启用账户。",
       "cancel": "取消",
       "save": "保存并刷新",
-      "saving": "保存中"
+      "saving": "保存中",
+      "discardTitle": "放弃未保存的更改？",
+      "discardBody": "您对投资组合账户的修改尚未保存。",
+      "discard": "放弃"
     },
     "connections": {
       "title": "本地连接中心",
