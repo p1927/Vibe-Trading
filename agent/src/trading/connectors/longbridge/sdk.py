@@ -17,22 +17,17 @@ environment.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from types import ModuleType
 from typing import Any, Mapping
 
-from src.core.atomic_write import SECRET_WRITE, write_json_atomic
-from src.config.paths import get_runtime_root
 from src.trading.connectors.longbridge.credentials import (
     LongbridgeCredentialError,
     resolve_longbridge_credentials,
 )
 
-CONFIG_FILENAME = "longbridge.json"
 
 PROFILE_ENVIRONMENTS = {
     "paper": "paper",
@@ -177,39 +172,6 @@ def build_config(profile_config: Mapping[str, Any] | None = None, overrides: Map
         _credential_error(resolution) if resolution is not None else resolution_error
     )
     return LongbridgeConfig.from_mapping(base)
-
-
-def config_path() -> Path:
-    """Return the user-level Longbridge config path."""
-    return get_runtime_root() / CONFIG_FILENAME
-
-
-def load_config() -> LongbridgeConfig:
-    """Load the legacy runtime-file settings without exposing parse details."""
-    path = config_path()
-    if not path.exists():
-        return LongbridgeConfig()
-    try:
-        return LongbridgeConfig.from_mapping(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        raise LongbridgeConfigError("invalid Longbridge runtime config") from exc
-
-
-def save_config(config: LongbridgeConfig) -> Path:
-    """Persist public Longbridge settings with owner-only permissions."""
-    path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "app_key": config.app_key,
-        "app_secret": config.app_secret,
-        "access_token": config.access_token,
-        "profile": config.profile,
-        "region": config.region,
-        "timeout": config.timeout,
-        "readonly": config.readonly,
-    }
-    write_json_atomic(path, payload, newline=True, **SECRET_WRITE)
-    return path
 
 
 def longbridge_available() -> bool:

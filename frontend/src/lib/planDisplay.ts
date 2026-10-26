@@ -77,7 +77,7 @@ export function buildPlanSummary(artifact: HubPlanArtifact): string {
 
   const view = formatViewLabel(artifact.prediction?.view);
   const move = artifact.prediction?.expected_move_pct;
-  if (view && move != null) {
+  if (view && move != null && Number.isFinite(Number(move))) {
     return `${view} on ${artifact.underlying ?? "this symbol"} — expected move about ±${Number(move).toFixed(1)}% into expiry. Live option chain is needed to rank specific strategies.`;
   }
 

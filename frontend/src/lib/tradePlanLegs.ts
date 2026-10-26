@@ -166,7 +166,7 @@ export function computePnlOverTimeSamples(
   legs: StrategyLeg[],
   spot: number,
   expiry: string,
-  entryCharges = 0,
+  entryCharges: number | null = null,
   points = 6,
 ): PnlOverTimeSample[] {
   if (spot <= 0 || legs.length === 0) return [];
@@ -180,7 +180,10 @@ export function computePnlOverTimeSamples(
     samples.push({
       days_to_expiry: dte,
       pnl: Math.round(pnl * 100) / 100,
-      net_pnl: Math.round((pnl - entryCharges) * 100) / 100,
+      // Unknown charges are not zero charges: without them the curve is gross P&L only (no net_pnl).
+      ...(entryCharges != null && Number.isFinite(entryCharges)
+        ? { net_pnl: Math.round((pnl - entryCharges) * 100) / 100 }
+        : {}),
     });
   }
   return samples;

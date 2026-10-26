@@ -32,7 +32,7 @@ function parseCron(value: string): ParsedCron | null {
   const everyNMinutes = /^\*\/(\d+)$/.exec(min);
   if (everyNMinutes && hour === "*" && dom === "*" && month === "*" && dow === "*") {
     const interval = parseInt(everyNMinutes[1], 10);
-    if (interval < 1 || interval > 59) return null; // */0 or */99 is not a structured value: show it as custom
+    if (interval < 1 || interval > 59) return null; // "*/0" and "*/99" are not an interval the select can show
     return { ...DEFAULT_PARSED, kind: "minutes", minuteInterval: parseInt(everyNMinutes[1], 10) };
   }
 
@@ -43,7 +43,8 @@ function parseCron(value: string): ParsedCron | null {
   const minuteNum = /^\d+$/.test(min) ? parseInt(min, 10) : null;
   const hourNum = /^\d+$/.test(hour) ? parseInt(hour, 10) : null;
   if (minuteNum == null || hourNum == null || month !== "*") return null;
-  if (minuteNum > 59 || hourNum > 23) return null; // out of range: fall through to the custom-cron path, not a select
+  // An out-of-range field is not "structured": the selects would show their first option while the field holds the bad value.
+  if (minuteNum > 59 || hourNum > 23) return null;
 
   if (dom === "*" && dow === "*") {
     return { ...DEFAULT_PARSED, kind: "daily", minute: minuteNum, hour: hourNum };

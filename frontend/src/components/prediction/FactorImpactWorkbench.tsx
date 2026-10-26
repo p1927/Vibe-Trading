@@ -20,6 +20,7 @@ import { finiteOrNull } from "@/lib/finite";
 import { FactorImpactInteractiveChart } from "@/components/prediction/FactorImpactInteractiveChart";
 import { FactorNewsEventPanel } from "@/components/prediction/FactorNewsEventPanel";
 import { FactorPedagogyLink } from "@/components/prediction/FactorPedagogyLink";
+import { formatSignedPercent } from "@/lib/formatters";
 
 interface Props {
   artifact: IndexPredictionArtifact;
@@ -29,10 +30,6 @@ interface Props {
   factorHistory?: IndexFactorHistoryPoint[];
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 function fmtLevel(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -285,7 +282,7 @@ export function FactorImpactWorkbench({
                     style={{ width: `${Math.min(100, (Math.abs(row.value) / maxChannelAbs) * 100)}%` }}
                   />
                 </div>
-                <span className="text-right tabular-nums font-medium">{fmtPct(row.value)}</span>
+                <span className="text-right tabular-nums font-medium">{formatSignedPercent(row.value)}</span>
               </li>
             ))}
           </ul>
@@ -296,7 +293,7 @@ export function FactorImpactWorkbench({
         <div className="rounded-lg bg-muted/40 px-3 py-2">
           <p className="text-[9px] uppercase text-muted-foreground">Baseline ({horizonDays}d)</p>
           <p className="text-sm font-semibold tabular-nums">{fmtLevel(baselineLevel)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtPct(baselineReturn)}</p>
+          <p className="text-[10px] text-muted-foreground">{formatSignedPercent(baselineReturn)}</p>
         </div>
         <div
           className={cn(
@@ -317,7 +314,7 @@ export function FactorImpactWorkbench({
               deltaReturn < 0 && "text-red-600 dark:text-red-400",
             )}
           >
-            {fmtPct(displayReturn)}
+            {formatSignedPercent(displayReturn)}
             {deltaReturn !== 0 ? ` (${deltaReturn >= 0 ? "+" : ""}${deltaReturn.toFixed(2)}% vs base)` : ""}
           </p>
         </div>
@@ -346,7 +343,7 @@ export function FactorImpactWorkbench({
                 <option key={r.factor} value={r.factor}>
                   {r.label}
                   {r.correlationCaveat ? " · correlated" : ""}
-                  {r.contribution != null ? ` (${fmtPct(r.contribution)})` : ""}
+                  {r.contribution != null ? ` (${formatSignedPercent(r.contribution)})` : ""}
                 </option>
               ))}
             </select>

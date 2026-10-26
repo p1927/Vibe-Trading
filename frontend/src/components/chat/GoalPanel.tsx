@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Pencil, Play, Target, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, type GoalSnapshot } from "@/lib/api";
+import { useConfirm } from "@/components/common/useConfirm";
 
 function isCriterionStatusMet(status: string): boolean {
   return !["", "pending", "open", "unsatisfied"].includes(status.toLowerCase());
@@ -71,14 +72,24 @@ export const GoalPanel = memo(function GoalPanel({
   const [editActive, setEditActive] = useState(false);
   const [editValue, setEditValue] = useState("");
   const goalProgress = useMemo(() => getGoalProgress(snapshot), [snapshot]);
+  const [confirm, confirmDialog] = useConfirm();
+  const cancelling = useRef(false);
 
   useEffect(() => {
     if (openRequest > 0) setDetailsOpen(true);
   }, [openRequest]);
 
   const handleCancel = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId || cancelling.current) return;
+    cancelling.current = true;
     try {
+      const ok = await confirm({
+        title: t("agent.cancelGoal"),
+        description: snapshot.goal.objective,
+        confirmLabel: t("agent.cancelGoal"),
+        tone: "destructive",
+      });
+      if (!ok) return;
       await api.updateGoalStatus(sessionId, {
         goal_id: snapshot.goal.goal_id,
         expected_goal_id: snapshot.goal.goal_id,
@@ -90,8 +101,10 @@ export const GoalPanel = memo(function GoalPanel({
       toast.success(t("agent.researchGoalCancelled"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("agent.failedToCancelGoal"));
+    } finally {
+      cancelling.current = false;
     }
-  }, [onSnapshotChange, sessionId, snapshot, t]);
+  }, [confirm, onSnapshotChange, sessionId, snapshot, t]);
 
   const handleStartEdit = useCallback(() => {
     setEditValue(snapshot.goal.objective);
@@ -117,6 +130,7 @@ export const GoalPanel = memo(function GoalPanel({
 
   return (
     <div className="grid gap-2">
+      {confirmDialog}
       <button
         type="button"
         onClick={() => setDetailsOpen((open) => !open)}

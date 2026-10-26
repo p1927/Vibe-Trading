@@ -377,10 +377,14 @@ def get_llm_credentials(
     key_env, base_env = caps.api_key_env, caps.base_url_env
 
     if key_env is not None:
+        # ``_sync_provider_env`` mirrors the *configured* provider's key into OPENAI_API_KEY; a fallback provider
+        # with no key of its own must not send that other provider's key to its host (same gate as the URL below).
         api_key = os.getenv(  # noqa: env-gate
             key_env, ""
-        ) or os.getenv(  # noqa: env-gate — dynamic provider key fallback
-            "OPENAI_API_KEY", ""
+        ) or (
+            os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate — dynamic provider key fallback
+            if allow_generic_openai_env
+            else ""
         )
     else:
         api_key = (

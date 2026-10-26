@@ -10,14 +10,14 @@ export type CalendarEventItem =
   | { kind: "calendar"; key: string; data: HistoricalUpcomingEvent };
 
 function returnDirection(returnPct?: number | null): "up" | "down" | "flat" | null {
-  if (returnPct === undefined || returnPct === null) return null;
+  if (returnPct === undefined || returnPct === null || !Number.isFinite(returnPct)) return null;
   if (returnPct > 0) return "up";
   if (returnPct < 0) return "down";
   return "flat";
 }
 
 function formatReturnPct(returnPct?: number | null): string | null {
-  if (returnPct === undefined || returnPct === null) return null;
+  if (returnPct === undefined || returnPct === null || !Number.isFinite(returnPct)) return null;
   const sign = returnPct > 0 ? "+" : "";
   return `${sign}${returnPct.toFixed(2)}%`;
 }

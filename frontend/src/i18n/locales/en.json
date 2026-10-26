@@ -1741,7 +1741,10 @@
       "footerHint": "Enabled accounts refresh after saving.",
       "cancel": "Cancel",
       "save": "Save and refresh",
-      "saving": "Saving"
+      "saving": "Saving",
+      "discardTitle": "Discard unsaved changes?",
+      "discardBody": "Your edits to the portfolio accounts have not been saved.",
+      "discard": "Discard"
     },
     "connections": {
       "title": "Local connection center",

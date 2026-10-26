@@ -3,12 +3,8 @@ import { Loader2 } from "lucide-react";
 import type { IndexCounterfactualRow, IndexMissAnalysisReport } from "@/lib/api";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 import { formatIst } from "@/lib/istTime";
+import { formatSignedPercent } from "@/lib/formatters";
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
 
 interface Props {
   report: IndexMissAnalysisReport | null;
@@ -50,7 +46,7 @@ function ContribBars({
                 className={`h-2 rounded-sm ${val != null && val < 0 ? "bg-red-500/70" : "bg-emerald-500/70"}`}
                 style={{ width: `${width}%` }}
               />
-              <span className="tabular-nums">{fmtPct(val)}</span>
+              <span className="tabular-nums">{formatSignedPercent(val)}</span>
             </li>
           );
         })}
@@ -155,7 +151,7 @@ export function PredictionMissAnalysisPanel({
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">MAE</span>
-          <p className="text-lg font-semibold tabular-nums">{fmtPct(summary.mae_pct)}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatSignedPercent(summary.mae_pct)}</p>
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">Top miss type</span>
@@ -220,8 +216,8 @@ export function PredictionMissAnalysisPanel({
                     >
                       <td className="py-1.5 pr-3 tabular-nums">{row.prediction_date}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{row.maturity_date}</td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.predicted_return_pct)}</td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_return_pct)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.predicted_return_pct)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.actual_return_pct)}</td>
                       <td className="py-1.5">{row.miss_category?.replace(/_/g, " ") ?? "—"}</td>
                     </tr>
                     {open ? (
@@ -238,7 +234,7 @@ export function PredictionMissAnalysisPanel({
                               <ul className="space-y-0.5">
                                 {(row.factor_delta_horizon ?? []).map((d) => (
                                   <li key={d.factor}>
-                                    {d.label}: {d.t0} → {d.t1} (Δ {fmtPct(d.delta)})
+                                    {d.label}: {d.t0} → {d.t1} (Δ {formatSignedPercent(d.delta)})
                                   </li>
                                 ))}
                               </ul>
@@ -269,8 +265,8 @@ export function PredictionMissAnalysisPanel({
                                 valueKey="delta_contribution_pct"
                               />
                               <p className="md:col-span-2 text-[10px] text-muted-foreground">
-                                Residual {fmtPct(cf.residual_pct)} · Drift explains {fmtPct(cf.explained_by_drift_pct)} ·
-                                Unexplained {fmtPct(cf.unexplained_pct)}
+                                Residual {formatSignedPercent(cf.residual_pct)} · Drift explains {formatSignedPercent(cf.explained_by_drift_pct)} ·
+                                Unexplained {formatSignedPercent(cf.unexplained_pct)}
                               </p>
                             </div>
                           ) : null}

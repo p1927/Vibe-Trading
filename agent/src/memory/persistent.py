@@ -252,7 +252,8 @@ class PersistentMemory:
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
-            except OSError:
+            except OSError as exc:
+                logger.warning("memory entry %s unreadable, skipped: %s", path, exc)
                 continue
             meta, body = _parse_frontmatter(text)
             mtime = path.stat().st_mtime

@@ -14,7 +14,7 @@ import {
   formatLegsSummary,
   shouldShowConfidence,
 } from "@/lib/planDisplay";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatFractionPercent } from "@/lib/formatters";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
@@ -53,11 +53,6 @@ export interface ResearchContextPanelProps {
   recommendedScore?: number | null;
   rankedStrategies?: RankedStrategy[];
   scenarios?: TradePlanScenario[];
-}
-
-function fmtPct(v: number | null | undefined, digits = 0): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
-  return `${(v * (v <= 1 ? 100 : 1)).toFixed(digits)}%`;
 }
 
 function tierTone(tier: string | null | undefined): string {
@@ -171,7 +166,7 @@ export function ResearchContextPanel({
               )}
               {recommendedScore != null && showConfidence && (
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-                  Score {(recommendedScore * (recommendedScore <= 1 ? 100 : 1)).toFixed(0)}
+                  Score {formatNumber(recommendedScore * 100, { maximumFractionDigits: 0 })}
                 </span>
               )}
             </div>
@@ -194,7 +189,7 @@ export function ResearchContextPanel({
               {pred.expected_move_pct != null && (
                 <div className="rounded-lg border bg-background/60 px-2.5 py-2">
                   <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Expected move</dt>
-                  <dd className="mt-0.5 font-medium tabular-nums">±{Number(pred.expected_move_pct).toFixed(1)}%</dd>
+                  <dd className="mt-0.5 font-medium tabular-nums">±{formatNumber(Number(pred.expected_move_pct), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</dd>
                 </div>
               )}
               {merged.spot != null && (
@@ -253,7 +248,7 @@ export function ResearchContextPanel({
                       )}
                       {sc.probability != null && (
                         <span className="text-[10px] tabular-nums text-muted-foreground">
-                          {fmtPct(Number(sc.probability), 0)} likely
+                          {formatFractionPercent(Number(sc.probability))} likely
                         </span>
                       )}
                     </div>

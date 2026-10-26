@@ -1741,7 +1741,10 @@
       "footerHint": "As contas habilitadas são atualizadas após salvar.",
       "cancel": "Cancelar",
       "save": "Salvar e atualizar",
-      "saving": "Salvando"
+      "saving": "Salvando",
+      "discardTitle": "Descartar alterações não salvas?",
+      "discardBody": "Suas alterações nas contas da carteira não foram salvas.",
+      "discard": "Descartar"
     },
     "connections": {
       "title": "Centro de conexão local",

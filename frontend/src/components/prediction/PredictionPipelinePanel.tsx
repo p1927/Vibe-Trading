@@ -16,6 +16,7 @@ const LEVEL_STYLES: Record<string, string> = {
   error: "text-red-700 dark:text-red-400",
 };
 
+// Mirrors `pipeline_log.PIPELINE_STAGE_ORDER` (pinned by agent/tests/test_pipeline_stage_order_matches_frontend.py).
 const PIPELINE_STAGE_ORDER = [
   "start",
   "history",
@@ -23,7 +24,9 @@ const PIPELINE_STAGE_ORDER = [
   "constituents",
   "ohlcv_cache",
   "momentum",
+  "volume_interest",
   "macro",
+  "panel_parity",
   "alpha_zoo",
   "spot",
   "regime",
@@ -33,9 +36,11 @@ const PIPELINE_STAGE_ORDER = [
   "reconcile",
   "debate",
   "forecast_lab",
+  "meta_strategy",
   "explain",
   "accuracy",
   "ledger",
+  "forecast_fan",
   "done",
   "events",
   "news_impact",

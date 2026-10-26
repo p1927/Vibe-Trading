@@ -9,12 +9,6 @@ export function fmtInr(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 }
 
-/** For fraction-scale values (0-1), e.g. confidence. */
-export function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(0)}%`;
-}
-
 /** For already-percent-scale values (e.g. `expected_move_pct`, which is `1.2` meaning
  * 1.2%, not a 0-1 fraction) — no ×100. */
 export function fmtPctScale(v: number | null | undefined): string {

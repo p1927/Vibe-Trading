@@ -14,6 +14,7 @@ import {
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { getChartTheme } from "@/lib/chart-theme";
 import type { NewsScenarioFanBand, NewsScenarioOutcome, NewsScenarioPathPoint } from "@/lib/api";
+import { formatSignedPercent } from "@/lib/formatters";
 
 const OUTCOME_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1"];
 
@@ -22,10 +23,6 @@ function fmtLevel(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 function pathKey(row: NewsScenarioPathPoint, index: number): string {
   if (row.date) return row.date;
@@ -208,5 +205,5 @@ export function NewsScenarioPathChart({
 }
 
 export function formatOutcomeReturn(outcome: NewsScenarioOutcome): string {
-  return fmtPct(outcome.expected_return_pct);
+  return formatSignedPercent(outcome.expected_return_pct);
 }

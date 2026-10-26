@@ -5,6 +5,7 @@ import { IndexForecastReturnChart } from "@/components/charts/IndexForecastRetur
 import { useReplayView } from "@/components/prediction/forecast-replay/useReplayView";
 import { issueTimeline } from "@/lib/forecastReplay/timeline";
 import { formatIstTime } from "@/lib/istTime";
+import { formatSignedPercent } from "@/lib/formatters";
 
 const HEADLINE = ["headline"];
 const LIVE: ["live"] = ["live"];
@@ -16,11 +17,6 @@ function fmtLevel(v: number | undefined): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
-}
 
 interface Props {
   daily: IndexPredictionHistoryRow[];
@@ -106,11 +102,11 @@ export function ForecastHistorySection({
                   <td className="px-3 py-2 tabular-nums">{row.issue_day ?? "—"}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.implied_level)}</td>
-                  <td className="px-3 py-2 tabular-nums">{fmtPct(row.expected_return_pct)}</td>
-                  <td className="px-3 py-2 tabular-nums">{fmtPct(row.bottom_up_return_pct)}</td>
-                  <td className="px-3 py-2 tabular-nums">{fmtPct(row.macro_delta_pct)}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatSignedPercent(row.expected_return_pct)}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatSignedPercent(row.bottom_up_return_pct)}</td>
+                  <td className="px-3 py-2 tabular-nums">{formatSignedPercent(row.macro_delta_pct)}</td>
                   <td className="px-3 py-2 tabular-nums">
-                    {row.actual_return_pct != null ? fmtPct(row.actual_return_pct) : "pending"}
+                    {row.actual_return_pct != null ? formatSignedPercent(row.actual_return_pct) : "pending"}
                   </td>
                 </tr>
               ))}
@@ -150,7 +146,7 @@ export function ForecastHistorySection({
                       <td className="py-1.5 pr-3 tabular-nums">{fmtTime(row.predicted_at)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtLevel(row.implied_level)}</td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.expected_return_pct)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatSignedPercent(row.expected_return_pct)}</td>
                       <td className="py-1.5 text-muted-foreground">{row.refresh ?? "—"}</td>
                     </tr>
                   ))}

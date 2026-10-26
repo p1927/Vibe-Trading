@@ -58,8 +58,12 @@ export function MarketRecordingPanel({
     });
   };
 
+  // Its own state: the 10 s status poll clears `syncError` on every good read, which hid this one while Start stayed disabled.
+  const [symbolsError, setSymbolsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (kind !== "fx") return;
+    setSymbolsError(null);
     api
       .getGlobalMacroUiCards()
       .then((res) => {

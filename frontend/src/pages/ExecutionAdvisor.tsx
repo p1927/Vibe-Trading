@@ -5,15 +5,11 @@ import { api } from "@/lib/api";
 import type { TrackRecordResponse } from "@/lib/knowledgeEngine";
 import type { ExecutionAdvisorAdvisory } from "@/lib/options";
 import { formatIstTime } from "@/lib/istTime";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatFractionPercent } from "@/lib/formatters";
 
 const POLL_INTERVAL_MS = 15_000;
 const UNGROUPED_KEY = "ungrouped";
 
-function fmtPct(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
-}
 
 /** The panel reads the newest row the scheduled sweep wrote, so it can be old. Past this the
  * advice is flagged stale: the sweep is not running, or has stopped. */
@@ -95,7 +91,7 @@ function AdvisoryCard({ advisory, now }: { advisory: ExecutionAdvisorAdvisory; n
           Trail stop <span className="font-medium text-foreground">{formatNumber(advisory.recommended_stop_price, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
-          Confidence (EMA) <span className="font-medium text-foreground">{fmtPct(advisory.confidence_ema)}</span>
+          Confidence (EMA) <span className="font-medium text-foreground">{formatFractionPercent(advisory.confidence_ema)}</span>
         </div>
         <div>
           Flip count <span className="font-medium text-foreground">{formatNumber(advisory.consecutive_flip_count, { maximumFractionDigits: 0 })}</span>
@@ -139,7 +135,7 @@ function TrackRecordPanel({ record }: { record: TrackRecordResponse | null }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
         <div>Samples <span className="font-medium text-foreground">{formatNumber(record.sample_count, { maximumFractionDigits: 0 })}</span></div>
         <div>Evaluated <span className="font-medium text-foreground">{formatNumber(record.eval_count, { maximumFractionDigits: 0 })}</span></div>
-        <div>Direction, {record.window_days}d <span className="font-medium text-foreground">{fmtPct(record.direction_hit_rate_14d)}</span></div>
+        <div>Direction, {record.window_days}d <span className="font-medium text-foreground">{formatFractionPercent(record.direction_hit_rate_14d)}</span></div>
         <div>MAE, {record.window_days}d <span className="font-medium text-foreground">{record.mae_14d_pct == null ? "–" : `${formatNumber(record.mae_14d_pct, { maximumFractionDigits: 2 })}%`}</span></div>
       </div>
     </section>

@@ -1,4 +1,5 @@
 import type { IndexPredictionArtifact } from "@/lib/api";
+import { formatSignedPercent } from "@/lib/formatters";
 
 const CHANNEL_LABELS: Record<string, string> = {
   valuation_pct: "Valuation",
@@ -13,11 +14,6 @@ const CHANNEL_LABELS: Record<string, string> = {
   unexplained_pct: "Unexplained",
 };
 
-function fmtPct(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
-}
 
 interface Props {
   artifact: IndexPredictionArtifact;
@@ -70,7 +66,7 @@ export function CauseAttributionPanel({ artifact }: Props) {
               <div className="h-2 overflow-hidden rounded-full bg-muted/60">
                 <div className={`h-full rounded-full ${tone}`} style={{ width: `${widthPct}%` }} />
               </div>
-              <span className="text-right tabular-nums">{fmtPct(row.value, 3)}</span>
+              <span className="text-right tabular-nums">{formatSignedPercent(row.value, 3)}</span>
             </li>
           );
         })}

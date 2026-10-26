@@ -25,7 +25,6 @@ LIVE = {"LONGBRIDGE_APP_KEY": "k", "LONGBRIDGE_APP_SECRET": "s", "LONGBRIDGE_ACC
 def _env(monkeypatch, tmp_path):
     for name in (*LIVE, "LONGBRIDGE_PAPER_ACCESS_TOKEN"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(lb, "get_runtime_root", lambda: tmp_path)
     monkeypatch.setattr(lb_credentials, "get_runtime_root", lambda: tmp_path)
     reset_env_config()
     yield

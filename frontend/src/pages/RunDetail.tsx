@@ -54,6 +54,7 @@ import { RunCardPanel, RunCardStat, formatRunCardValue } from "@/components/run/
 import { isDateColumn } from "@/lib/positions";
 import { buildMetricsCsv, buildTradesCsv } from "@/lib/csv";
 import { fmtFinite } from "@/lib/finite";
+import { formatFractionPercent } from "@/lib/formatters";
 
 const rehypePlugins = [rehypeHighlight];
 
@@ -555,11 +556,6 @@ function RunCardTab({ card }: { card: RunCard }) {
   );
 }
 
-function fmtPct(v: number | null | undefined, digits = 1): string {
-  // null is a missing reading (JSON has no undefined): Number(null) is 0, which would print "0.0%".
-  if (v == null || !Number.isFinite(v)) return "-";
-  return `${(v * 100).toFixed(digits)}%`;
-}
 
 function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceNotesPayload }) {
   const concentration = xray?.concentration || {};
@@ -577,8 +573,8 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <RunCardStat label={i18n.t("runDetail.hhi")} value={fmtFinite(concentration.hhi, 3)} />
             <RunCardStat label={i18n.t("runDetail.effectiveN")} value={fmtFinite(concentration.effective_n, 1)} />
-            <RunCardStat label={i18n.t("runDetail.annualizedVol")} value={fmtPct(volatility.annualized_vol)} />
-            <RunCardStat label={i18n.t("runDetail.maxDrawdown")} value={fmtPct(drawdown.max_drawdown)} />
+            <RunCardStat label={i18n.t("runDetail.annualizedVol")} value={formatFractionPercent(volatility.annualized_vol, 1)} />
+            <RunCardStat label={i18n.t("runDetail.maxDrawdown")} value={formatFractionPercent(drawdown.max_drawdown, 1)} />
           </div>
           {weightEntries.length > 0 && (
             <div className="mt-3 overflow-x-auto">
@@ -593,7 +589,7 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
                   {weightEntries.map(([sym, w]) => (
                     <tr key={sym} className="border-b last:border-0 hover:bg-muted/40">
                       <td className="py-1.5 ps-4 pr-4 font-mono text-xs">{sym}</td>
-                      <td className="py-1.5 pr-4 font-mono tabular-nums">{fmtPct(w)}</td>
+                      <td className="py-1.5 pr-4 font-mono tabular-nums">{formatFractionPercent(w, 1)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -611,9 +607,9 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <RunCardStat label={i18n.t("runDetail.rebalanceCount")} value={String(summary.target_change_count ?? summary.rebalance_count ?? "—")} />
             <RunCardStat label={i18n.t("runDetail.rebalanceExecuted")} value={String(summary.rebalance_executed_fills ?? "-")} />
-            <RunCardStat label={i18n.t("runDetail.rebalanceRealizedTurnover")} value={fmtPct(summary.rebalance_realized_turnover)} />
-            <RunCardStat label={i18n.t("runDetail.turnoverMean")} value={fmtPct(summary.turnover_mean)} />
-            <RunCardStat label={i18n.t("runDetail.turnoverMax")} value={fmtPct(summary.turnover_max)} />
+            <RunCardStat label={i18n.t("runDetail.rebalanceRealizedTurnover")} value={formatFractionPercent(summary.rebalance_realized_turnover, 1)} />
+            <RunCardStat label={i18n.t("runDetail.turnoverMean")} value={formatFractionPercent(summary.turnover_mean, 1)} />
+            <RunCardStat label={i18n.t("runDetail.turnoverMax")} value={formatFractionPercent(summary.turnover_max, 1)} />
             <RunCardStat label={i18n.t("runDetail.largestRebalance")} value={summary.largest_rebalance_date || "-"} />
           </div>
           {rebalances.length > 0 && (
@@ -631,7 +627,7 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
                   {rebalances.map((r) => (
                     <tr key={r.date} className="border-b last:border-0 hover:bg-muted/40">
                       <td className="py-1.5 ps-4 pr-4 font-mono text-xs">{r.date}</td>
-                      <td className="py-1.5 pr-4 font-mono tabular-nums">{fmtPct(r.turnover)}</td>
+                      <td className="py-1.5 pr-4 font-mono tabular-nums">{formatFractionPercent(r.turnover, 1)}</td>
                       <td className="py-1.5 pr-4 text-xs">{(r.entries || []).map((e) => e.code).join(", ") || "-"}</td>
                       <td className="py-1.5 text-xs">{(r.exits || []).map((e) => e.code).join(", ") || "-"}</td>
                     </tr>

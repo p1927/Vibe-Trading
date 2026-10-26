@@ -12,9 +12,10 @@ import {
 import type { IndexTrackChartPayload } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import { fmtPct, trackColor } from "@/lib/trackScoreboardUtils";
+import { trackColor } from "@/lib/trackScoreboardUtils";
 import { createLightweightChart, fitLightweightChart } from "@/lib/lightweightChartOptions";
 import { LightweightChartZoomBar } from "@/components/charts/LightweightChartZoomBar";
+import { formatSignedPercent } from "@/lib/formatters";
 
 interface Props {
   chart: IndexTrackChartPayload | null | undefined;
@@ -224,7 +225,7 @@ export function TrackScoreboardChart({ chart, height = 360, showCombiners = fals
         ))}
       </div>
       <p className="text-[10px] text-muted-foreground">
-        {chart.horizon_days ?? 14}d forward return % at each OOS eval date · {fmtPct(0).replace("+", "")} dashed
+        {chart.horizon_days ?? 14}d forward return % at each OOS eval date · {formatSignedPercent(0).replace("+", "")} dashed
         reference line
       </p>
     </div>

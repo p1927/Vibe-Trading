@@ -4,6 +4,7 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 import { api, type DayAttributionResponse, type IndexBacktestDrawdown, type IndexDayAttribution } from "@/lib/api";
+import { formatSignedPercent } from "@/lib/formatters";
 
 export interface NiftyHistoryPoint {
   date: string;
@@ -21,10 +22,6 @@ function fmtLevel(v: number): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
 
 export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height = 280 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -112,7 +109,7 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
       return {
         name: p.date,
         coord: [idx, p.close],
-        value: fmtPct(move),
+        value: formatSignedPercent(move),
         itemStyle: { color: move < 0 ? t.downColor : t.upColor },
       };
     });
@@ -132,7 +129,7 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
           const idx = row?.dataIndex ?? 0;
           const p = series[idx];
           if (!p) return "";
-          return `${p.date}<br/>Close ${fmtLevel(p.close)}<br/>1d ${fmtPct(p.realized_1d_pct)}<br/><span style="opacity:0.8">Click for causes</span>`;
+          return `${p.date}<br/>Close ${fmtLevel(p.close)}<br/>1d ${formatSignedPercent(p.realized_1d_pct)}<br/><span style="opacity:0.8">Click for causes</span>`;
         },
       },
       xAxis: {
@@ -205,7 +202,7 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
                       : " ml-2 text-emerald-600 dark:text-emerald-400"
                   }
                 >
-                  {fmtPct(attribution.realized_1d_pct)} (1d)
+                  {formatSignedPercent(attribution.realized_1d_pct)} (1d)
                 </span>
               ) : null}
             </p>
@@ -226,8 +223,8 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
               <ul className="space-y-1">
                 {constituentMovers.slice(0, 6).map((m) => (
                   <li key={m.symbol}>
-                    <span className="font-medium">{m.symbol}</span> {fmtPct(m.return_1d_pct)} (
-                    {m.weight_pct?.toFixed(1)}% wt · index {fmtPct(m.index_contribution_pct)})
+                    <span className="font-medium">{m.symbol}</span> {formatSignedPercent(m.return_1d_pct)} (
+                    {m.weight_pct?.toFixed(1)}% wt · index {formatSignedPercent(m.index_contribution_pct)})
                     {(m.headlines ?? []).length ? (
                       <ul className="ml-3 mt-0.5 text-muted-foreground">
                         {m.headlines!.map((h) => (

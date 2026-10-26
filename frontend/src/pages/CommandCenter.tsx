@@ -20,6 +20,7 @@ import { useSSE, type SSEStatus } from "@/hooks/useSSE";
 import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { formatIst } from "@/lib/istTime";
+import { formatSignedPercent } from "@/lib/formatters";
 
 const EVENTS_HORIZON_DAYS = 7;
 
@@ -97,10 +98,6 @@ function fmtLevel(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtPct(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
-}
 
 const LAST_SEEN_PREDICTION_KEY = "command-center:last-seen-nifty-prediction";
 
@@ -538,7 +535,7 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
             <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
               <History className="h-3.5 w-3.5 shrink-0" />
               <span>
-                Revised: {fmtPct(revision.returnDeltaPct)}
+                Revised: {formatSignedPercent(revision.returnDeltaPct)}
                 {revision.prevRangeLow != null && revision.prevRangeHigh != null
                   ? ` (was ${fmtLevel(revision.prevRangeLow)}–${fmtLevel(revision.prevRangeHigh)})`
                   : ""}

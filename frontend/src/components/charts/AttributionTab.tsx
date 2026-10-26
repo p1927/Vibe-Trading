@@ -14,15 +14,13 @@ import type {
 import { AttributionCumulativeChart } from "./AttributionCumulativeChart";
 import { AttributionWaterfallChart } from "./AttributionWaterfallChart";
 import { RollingBetaAlphaChart } from "./RollingBetaAlphaChart";
+import { formatFractionPercent } from "@/lib/formatters";
 
 type AttrState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; data: AttributionResponse };
 
-function fmtPct(v: number, digits = 2): string {
-  return `${(v * 100).toFixed(digits)}%`;
-}
 
 function fmtSignedPct(v: number, digits = 2): string {
   return `${v > 0 ? "+" : ""}${(v * 100).toFixed(digits)}%`;
@@ -118,8 +116,8 @@ function BrinsonTable({ brinson }: { brinson: AttributionBrinson }) {
           {sectors.map((s) => (
             <tr key={s.sector} className="border-b last:border-0 hover:bg-muted/40">
               <td className="py-2 ps-4 pr-4 font-mono text-xs">{s.sector}</td>
-              <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtPct(s.portfolio_weight)}</td>
-              <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtPct(s.benchmark_weight)}</td>
+              <td className="py-2 pr-4 text-right font-mono tabular-nums">{formatFractionPercent(s.portfolio_weight, 2)}</td>
+              <td className="py-2 pr-4 text-right font-mono tabular-nums">{formatFractionPercent(s.benchmark_weight, 2)}</td>
               <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtSignedPct(s.portfolio_return)}</td>
               <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtSignedPct(s.benchmark_return)}</td>
               <td className={cn("py-2 pr-4 text-right font-mono tabular-nums", signedNumberClass(s.allocation))}>{fmtSignedPct(s.allocation)}</td>
@@ -130,8 +128,8 @@ function BrinsonTable({ brinson }: { brinson: AttributionBrinson }) {
           ))}
           <tr className="border-t bg-muted/40 font-semibold">
             <td className="py-2 ps-4 pr-4">{i18n.t("runDetail.attrTotal")}</td>
-            <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtPct(weightTotal("portfolio_weight"))}</td>
-            <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtPct(weightTotal("benchmark_weight"))}</td>
+            <td className="py-2 pr-4 text-right font-mono tabular-nums">{formatFractionPercent(weightTotal("portfolio_weight"), 2)}</td>
+            <td className="py-2 pr-4 text-right font-mono tabular-nums">{formatFractionPercent(weightTotal("benchmark_weight"), 2)}</td>
             <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtSignedPct(brinson.portfolio_return)}</td>
             <td className="py-2 pr-4 text-right font-mono tabular-nums">{fmtSignedPct(brinson.benchmark_return)}</td>
             <td className={cn("py-2 pr-4 text-right font-mono tabular-nums", signedNumberClass(brinson.allocation))}>{fmtSignedPct(brinson.allocation)}</td>
@@ -173,7 +171,7 @@ function FactorStatCards({ factor, metrics }: { factor: AttributionFactor | null
         />
       )}
       {trackingError !== undefined && (
-        <AttrStat label={i18n.t("runDetail.attrTrackingError")} value={fmtPct(trackingError)} />
+        <AttrStat label={i18n.t("runDetail.attrTrackingError")} value={formatFractionPercent(trackingError, 2)} />
       )}
     </div>
   );

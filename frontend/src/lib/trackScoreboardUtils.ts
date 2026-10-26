@@ -9,11 +9,6 @@ export function trackColor(trackId: string): string {
   return TRACK_CHART_COLORS[trackId] ?? hashColor(trackId);
 }
 
-export function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
-}
-
 export function fmtHitRate(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${Math.round(v * 100)}%`;

@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
 import { anchorDays, forecastReturnPct } from "@/lib/forecastReplay/view";
-import { fmtPct } from "@/lib/trackScoreboardUtils";
+import { formatSignedPercent } from "@/lib/formatters";
 
 type Week = { week_start: string; records: ReplayRecord[] };
 
@@ -47,7 +47,7 @@ export function WeekView({ weeks, anchor, horizon, onAnchorChange }: Props) {
           return (
             <button key={d} type="button" onClick={() => onAnchorChange(d)}
               className={cn("rounded-md border px-2 py-0.5 text-[10px] tabular-nums", d === anchor ? "border-primary bg-primary/10 text-primary" : "border-border/60 text-muted-foreground hover:bg-muted/50")}>
-              {new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })} · {fmtPct(mean)}
+              {new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })} · {formatSignedPercent(mean)}
             </button>
           );
         })}
