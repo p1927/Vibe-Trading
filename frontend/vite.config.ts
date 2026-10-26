@@ -81,6 +81,11 @@ export default defineConfig(({ mode }) => {
     // (/options/payoff, /options/chain) — same dual role as /correlation.
     // Overrides the plain PROXY_PATHS entry above.
     "/options": apiProxyWithHtmlFallback,
+    // /knowledge and /execution-advisor are SPA pages AND API prefixes too: without the HTML fallback a hard
+    // reload on the page was proxied to the API (src/lib/__tests__/viteProxySpaRoutes.test.ts pins every
+    // router path that shares a prefix with an API proxy entry).
+    "/knowledge": apiProxyWithHtmlFallback,
+    "/execution-advisor": apiProxyWithHtmlFallback,
     "^/alpha(?:/|$)": apiProxy,
   };
 

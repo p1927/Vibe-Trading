@@ -3,6 +3,7 @@ import { safeGet, safeRemove, safeSet } from "@/lib/storage";
 
 const BASE = resolveApiBase();
 const STORAGE_KEY = "vibe_trading_api_auth_key";
+const TICKET_TIMEOUT_MS = 15_000;
 
 export function getApiAuthKey(): string {
   return safeGet(STORAGE_KEY) || "";
@@ -41,6 +42,7 @@ export async function withAuthTicket(url: string): Promise<string> {
   const res = await fetch(`${BASE}/auth/sse-ticket`, {
     method: "POST",
     headers: authHeaders(),
+    signal: AbortSignal.timeout(TICKET_TIMEOUT_MS), // a mid-restart API must fail the connect, not hang it
   });
   if (!res.ok) {
     throw new Error(`Failed to obtain SSE ticket (HTTP ${res.status})`);

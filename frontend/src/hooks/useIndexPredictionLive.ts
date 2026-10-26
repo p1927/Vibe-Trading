@@ -58,7 +58,7 @@ export function useIndexPredictionLive({
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "refresh_failed";
-      setLastReason(msg.length > 80 ? "refresh_failed" : msg);
+      setLastReason(msg.length > 80 ? `refresh_failed: ${msg.slice(0, 77)}…` : msg);
     } finally {
       refreshInFlightRef.current = false;
       setRefreshing(false);

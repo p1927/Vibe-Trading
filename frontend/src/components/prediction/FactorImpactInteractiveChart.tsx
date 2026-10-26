@@ -77,8 +77,9 @@ export function FactorImpactInteractiveChart({
     const t = getChartTheme();
 
     if (chartMode === "shock_sweep" && activeCurve?.points?.length) {
-      const pts = activeCurve.points;
-      const xs = pts.map((p) => `${p.factor_delta_pct ?? 0}%`);
+      // a point with no shock size cannot be placed: drop it rather than label it "0%"
+      const pts = activeCurve.points.filter((p) => finiteOrNull(p.factor_delta_pct) !== null);
+      const xs = pts.map((p) => `${p.factor_delta_pct}%`);
       const ys = pts.map((p) => finiteOrNull(p.index_level)); // a missing level is a gap, never 0
       const baselineLevel =
         pts.find((p) => p.factor_delta_pct === 0)?.index_level ??

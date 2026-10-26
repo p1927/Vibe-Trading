@@ -40,6 +40,23 @@ describe("R5: a missing Nifty level is a gap, never 0", () => {
     expect(o.series[0].markLine.data).toEqual([]);
   });
 
+  it("shock sweep: a point with no shock size is dropped, not labelled 0% / used as the baseline", () => {
+    render(
+      <FactorImpactInteractiveChart
+        spot={0}
+        horizonDays={5}
+        baselineReturnPct={1}
+        simulation={null}
+        activeFactor="crude"
+        chartMode="shock_sweep"
+        sensitivity={[{ factor: "crude", points: [{ index_level: 111 }, { factor_delta_pct: -5, index_level: 24000 }, { factor_delta_pct: 5, index_level: 25000 }] }]}
+      />,
+    );
+    const o = options[options.length - 1] as unknown as { xAxis: { data: string[] }; series: Array<{ data: unknown[] }> };
+    expect(o.xAxis.data).toEqual(["-5%", "5%"]);
+    expect(o.series[0].data).toEqual([24000, 25000]);
+  });
+
   it("horizon path: unknown spot gives null levels, not a line at 0", () => {
     render(
       <FactorImpactInteractiveChart spot={0} horizonDays={3} baselineReturnPct={1} simulation={null} activeFactor="crude" />,

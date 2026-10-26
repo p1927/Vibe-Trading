@@ -536,7 +536,12 @@ export function Prediction() {
         } else {
           setMissAnalysisError(res.message || "Miss analysis unavailable");
         }
-        setCounterfactual(cfRes.report?.misses ?? cfRes.report?.rows ?? null);
+        const cfRows = cfRes.report?.misses ?? cfRes.report?.rows ?? null;
+        setCounterfactual(cfRows);
+        // the miss report alone must not read as a complete answer when its counterfactual leg failed
+        if (res.report && cfRows === null && cfRes.status !== "ok") {
+          setMissAnalysisError(`Counterfactual unavailable: ${cfRes.message || cfRes.status}`);
+        }
       } catch (e) {
         if (isCurrent()) setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
       } finally {
