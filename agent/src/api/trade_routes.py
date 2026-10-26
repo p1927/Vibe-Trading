@@ -1634,6 +1634,28 @@ def _index_artifact_degraded_reason(artifact: Dict[str, Any] | None) -> str | No
     return "Index prediction incomplete: no view/contributors available."
 
 
+# ponytail: a full run stamps the fan at run start and the headline at run end, so the same run's fan
+# is a little older than its own headline; anything within this slack is "same run". Ceiling: a light
+# refresh inside the slack keeps showing the fan as current. Upgrade path: stamp the fan's run id on the artifact.
+_FAN_SAME_RUN_SLACK = timedelta(minutes=30)
+
+
+def _fan_is_stale(headline_as_of: Any, fan_predicted_at: Any) -> bool:
+    """True when the fan is older than the headline by more than a run's duration, or either
+    stamp is missing/unparseable (a fan that cannot be proven current is not presented as current).
+    Naive stamps are UTC (the hub stores UTC)."""
+
+    def _parse(v: Any) -> datetime | None:
+        try:
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    head, fan = _parse(headline_as_of), _parse(fan_predicted_at)
+    return head is None or fan is None or head - fan > _FAN_SAME_RUN_SLACK
+
+
 def _attach_latest_forecast_fan(artifact: dict[str, Any] | None, ticker: str) -> None:
     """Mutate ``artifact["prediction"]["forecast_fan"]`` in place with the most recently
     persisted `nifty_forecast_fan` band, when one exists.
@@ -1657,6 +1679,8 @@ def _attach_latest_forecast_fan(artifact: dict[str, Any] | None, ticker: str) ->
         logger.exception("index-prediction: failed to load latest forecast fan for %s", ticker)
         return
     if fan_band:
+        fan_band["fan_as_of"] = fan_band.get("predicted_at")
+        fan_band["fan_stale"] = _fan_is_stale(artifact.get("as_of"), fan_band.get("predicted_at"))
         artifact["prediction"]["forecast_fan"] = fan_band
 
 
