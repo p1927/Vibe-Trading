@@ -68,6 +68,14 @@ def _warm_route_imports() -> None:
             importlib.import_module(name)
         except Exception:  # the route reports its own import error when it is hit
             logger.warning("route import warm-up failed for %s", name, exc_info=True)
+    # The first /knowledge/wiki call also parsed ~2k wiki pages (cached per mtime signature afterwards):
+    # still 30 s+ cold on the release API once the imports were warm. Parse them here, off the request.
+    try:
+        from trade_integrations.knowledge_engine.query import load_wiki_pages
+
+        load_wiki_pages()
+    except Exception:
+        logger.warning("wiki page warm-up failed", exc_info=True)
 
 
 async def _run_startup_preflight() -> None:

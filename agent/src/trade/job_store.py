@@ -452,7 +452,20 @@ class JobStore:
             # (`/recording/active` took 14 s on release).
             if self._finished_mtime.get(path.name) == mtime:
                 continue
-            job = self.read(path.name)
+            try:
+                job = self.read(path.name)
+            except ValueError:
+                # A corrupt file is not an absent job (D479), so a recent one (it could be a live worker's
+                # mid-write) still stops the claim. One no worker can own any more is renamed aside instead of
+                # blocking every later claim in this store until someone deletes it by hand (an OSError is a
+                # transient read problem, not corruption, and always raises).
+                # ponytail: fixed 12 h age for stores with no adopt window; a per-store value if a job runs longer.
+                if mtime >= time.time() - _ADOPT_WINDOW_SECONDS:
+                    raise
+                logger.error("job file %s unreadable and not written for %d s; quarantined as job.json.corrupt",
+                             path / "job.json", _ADOPT_WINDOW_SECONDS, exc_info=True)
+                (path / "job.json").replace(path / "job.json.corrupt")
+                continue
             if job is not None and not self._is_active(job):
                 self._finished_mtime[path.name] = mtime
             if not self._is_active(job) or self._scope_for(job) != scope:
