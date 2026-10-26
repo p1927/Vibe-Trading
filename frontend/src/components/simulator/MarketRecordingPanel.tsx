@@ -58,8 +58,12 @@ export function MarketRecordingPanel({
     });
   };
 
+  // Its own state: the 10 s status poll clears `syncError` on every good read, which hid this one while Start stayed disabled.
+  const [symbolsError, setSymbolsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (kind !== "fx") return;
+    setSymbolsError(null);
     api
       .getGlobalMacroUiCards()
       .then((res) => {
@@ -69,7 +73,7 @@ export function MarketRecordingPanel({
         setFxMoneyFlowSymbols(moneyFlow);
         setSelectedSymbols(new Set(currency.map((s) => s.key)));
       })
-      .catch((err) => setSyncError(`Symbol list unavailable (${errorText(err, "request failed")}) - nothing can be started.`));
+      .catch((err) => setSymbolsError(`Symbol list unavailable (${errorText(err, "request failed")}) - nothing can be started.`));
   }, [kind]);
 
   const [busy, setBusy] = useState(false);
@@ -175,6 +179,11 @@ export function MarketRecordingPanel({
       </div>
 
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+      {symbolsError ? (
+        <p role="alert" data-testid="market-recording-symbols-error" className="text-[11px] text-amber-700 dark:text-amber-300">
+          {symbolsError}
+        </p>
+      ) : null}
       {syncError ? (
         <p role="alert" data-testid="market-recording-sync-error" className="text-[11px] text-amber-700 dark:text-amber-300">
           {syncError}

@@ -18,4 +18,12 @@ describe("RepeatIntervalPicker", () => {
     expect(screen.getByDisplayValue("07m")).toBeInTheDocument();
     expect(screen.getByDisplayValue("09h")).toBeInTheDocument();
   });
+
+  it("an out-of-range cron is custom text showing the bad value, not a select on its first option", () => {
+    for (const bad of ["99 9 * * *", "5 25 * * *", "0 9 * * 9", "*/0 * * * *"]) {
+      const { unmount } = render(<RepeatIntervalPicker value={bad} onChange={() => {}} />);
+      expect(screen.getByDisplayValue(bad)).toBeInTheDocument();
+      unmount();
+    }
+  });
 });
