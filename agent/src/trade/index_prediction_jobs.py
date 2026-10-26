@@ -56,11 +56,16 @@ def _job_display_label(job: ScheduledResearchJob) -> str:
     mode = str(job.config.get("mode") or "").strip().lower()
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY and mode:
         suffix = {"drain": " (drain)", "maintenance": " (maintenance)", "full": " (full)"}.get(mode, f" ({mode})")
-        return f"{base}{suffix}"
-    ingest_mode = str(job.config.get("mode") or "").strip().lower()
-    if job_type == JOB_TYPE_HUB_NEWS_INGEST and ingest_mode:
-        return f"{base} ({ingest_mode})"
-    return base
+        label = f"{base}{suffix}"
+    elif job_type == JOB_TYPE_HUB_NEWS_INGEST and mode:
+        # `-tight` is a verbatim clone of `-light` at a denser cadence (index_jobs), so only its id tells them apart.
+        label = f"{base} (tight)" if job.id.endswith("-hub-news-ingest-tight") else f"{base} ({mode})"
+    else:
+        label = base
+    # The India jobs carry no market (it is the default); every other market's twin of the same job names it, so
+    # nine "Hub news ingest (full)" rows can be told apart (and "Run now" / "Cancel" hit the intended one).
+    market = str(job.config.get("market") or "").strip().upper()
+    return f"{label} [{market}]" if market and market != "IN" else label
 
 
 def _entity_backpressure_threshold() -> int:
