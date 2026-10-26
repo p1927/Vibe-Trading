@@ -474,7 +474,8 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
   // real data), unlike fabricating a 7-day one. See
   // .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md.
   const dailyBand7d = useMemo(() => {
-    const fanBand = artifact?.prediction?.forecast_fan?.band;
+    const fan = artifact?.prediction?.forecast_fan;
+    const fanBand = fan?.fan_stale ? undefined : fan?.band; // a stale fan falls back to the headline's own band
     const spot = artifact?.spot;
     if (fanBand && fanBand.length > 0 && spot != null) {
       const interpolated = interpolateFanToDailyBand(fanBand, spot, EVENTS_HORIZON_DAYS);
@@ -491,7 +492,7 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
   // indicator" candidate panel.
   const uncertainty = useMemo(() => {
     const fan = artifact?.prediction?.forecast_fan;
-    if (!fan || !fan.band || fan.band.length === 0) return null;
+    if (!fan || fan.fan_stale || !fan.band || fan.band.length === 0) return null;
     const current = pickHeadlineFanPoint(fan.band, EVENTS_HORIZON_DAYS);
     const currentSpreadPct = fanSpreadPct(current);
     if (current == null || currentSpreadPct == null) return null;

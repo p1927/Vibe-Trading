@@ -3956,6 +3956,9 @@ export interface PlanPrediction {
   forecast_fan?: {
     fan_id: string;
     predicted_at: string;
+    /** True when this fan predates the headline (a light refresh does not rebuild it): the UI must not present it as current. */
+    fan_stale?: boolean;
+    fan_as_of?: string | null;
     band: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
     /** The second-most-recently-persisted fan (same shape), or `null` when this is the only
      * fan ever persisted for this ticker. A genuine "how has the model's own uncertainty
