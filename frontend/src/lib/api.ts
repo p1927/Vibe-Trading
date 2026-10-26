@@ -662,6 +662,12 @@ async function fetchIndexPredictionRunJobSnapshot(
   }
 }
 
+/**
+ * A snapshot fetch that fails (network, 5xx, job gone) reads as `null`. One miss is a blip; this many in a row means
+ * the job can no longer be followed, which must surface instead of polling silently until the 45 min / 8 h cap.
+ */
+const POLL_MAX_CONSECUTIVE_MISSES = 12;
+
 const ACTIVE_PREDICTION_JOB_STATUSES = new Set(["queued", "running"]);
 const POLL_REATTACH_MS = 3000;
 const POLL_REATTACH_MAX_MS = 45 * 60 * 1000;
@@ -693,11 +699,18 @@ async function pollIndexPredictionJobUntilDone(
 ): Promise<void> {
   const started = Date.now();
   let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  let misses = 0;
   options?.onReconnecting?.(true);
   try {
     while (Date.now() - started < POLL_REATTACH_MAX_MS) {
       if (signal?.aborted) return;
       const job = await fetchIndexPredictionRunJobSnapshot(jobId, signal);
+      if (signal?.aborted) return;
+      misses = job ? 0 : misses + 1;
+      if (misses >= POLL_MAX_CONSECUTIVE_MISSES) {
+        handlers.onError?.("Lost contact with the analysis job (the server stopped answering status requests)");
+        return;
+      }
       if (job?.logs && job.logs.length > lastLogCount) {
         for (let i = lastLogCount; i < job.logs.length; i += 1) {
           handlers.onLog?.(job.logs[i]!);
@@ -863,9 +876,16 @@ async function pollRecordingJobUntilDone(
 ): Promise<void> {
   const started = Date.now();
   let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  let misses = 0;
   while (Date.now() - started < RECORDING_POLL_REATTACH_MAX_MS) {
     if (signal?.aborted) return;
     const job = await fetchRecordingJobSnapshot(jobId, signal);
+    if (signal?.aborted) return;
+    misses = job ? 0 : misses + 1;
+    if (misses >= POLL_MAX_CONSECUTIVE_MISSES) {
+      handlers.onError?.("Lost contact with the recording job (the server stopped answering status requests)");
+      return;
+    }
     if (job?.logs && job.logs.length > lastLogCount) {
       for (let i = lastLogCount; i < job.logs.length; i += 1) {
         handlers.onLog?.(job.logs[i]!);
@@ -1000,9 +1020,16 @@ async function pollForecastEngineRunJobUntilDone(
 ): Promise<void> {
   const started = Date.now();
   let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  let misses = 0;
   while (Date.now() - started < FORECAST_ENGINE_RUN_POLL_REATTACH_MAX_MS) {
     if (signal?.aborted) return;
     const job = await fetchForecastEngineRunJobSnapshot(jobId, signal);
+    if (signal?.aborted) return;
+    misses = job ? 0 : misses + 1;
+    if (misses >= POLL_MAX_CONSECUTIVE_MISSES) {
+      handlers.onError?.("Lost contact with the forecast engine run (the server stopped answering status requests)");
+      return;
+    }
     if (job?.logs && job.logs.length > lastLogCount) {
       for (let i = lastLogCount; i < job.logs.length; i += 1) {
         handlers.onLog?.(job.logs[i]!);
