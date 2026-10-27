@@ -23,9 +23,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # A human operator's own follow-up chat message asking the agent to retry a
-# previously-failed action -- distinct from `is_autonomous_scheduler_turn`'s
-# literal `# Autonomous agent turn` marker text, which only the scheduler
-# itself injects. Without this, prefetch_autonomous_context() below returns ""
+# previously-failed action -- distinct from the scheduler turn (the attempt's structured turn_kind),
+# which only the scheduler sets. Without this, prefetch_autonomous_context() below returns ""
 # for every plain user chat turn (retry included), so the LLM has no fresh
 # tool-state snapshot to check against and just repeats whatever it last said
 # in that session's own chat history -- confirmed live: telling a real agent

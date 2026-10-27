@@ -67,12 +67,12 @@ def maybe_refresh_agent_intent(
         )
 
 
-def maybe_mark_autonomous_user_turn(session: Session, content: str) -> None:
-    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+def maybe_mark_autonomous_user_turn(session: Session) -> None:
+    """Mark a user chat turn on an autonomous agent (the caller only calls it when there is no turn_kind)."""
     from src.trade.session_context import is_autonomous_agent_session
 
     cfg = dict(session.config or {})
-    if not is_autonomous_agent_session(cfg) or is_autonomous_scheduler_turn(content):
+    if not is_autonomous_agent_session(cfg):
         return
     agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
     if not agent_id:
@@ -244,6 +244,7 @@ def maybe_widget_guard(
     assistant_text: str,
     tools_called: set[str] | list[str],
     session_config: Optional[Dict[str, Any]] = None,
+    turn_kind: str | None = None,
 ) -> None:
     from src.session.orchestrator_profile import is_orchestrator_session
 
@@ -259,6 +260,7 @@ def maybe_widget_guard(
             assistant_text=assistant_text,
             tools_called=tools_called,
             session_config=session_config,
+            turn_kind=turn_kind,
         )
     except Exception:
         logger.exception("Widget guard hook failed")
@@ -267,7 +269,6 @@ def maybe_widget_guard(
 async def maybe_autonomous_decision_guard(
     service: "SessionService",
     session: Session,
-    user_message: str,
     tools_called: set[str] | list[str],
     turn_kind: str | None = None,
 ) -> bool:
@@ -282,7 +283,6 @@ async def maybe_autonomous_decision_guard(
             await maybe_retry_autonomous_decision(
                 service,
                 session.session_id,
-                user_message=user_message,
                 tools_called=tools_called,
                 session_config=dict(session.config),
                 turn_kind=turn_kind,
@@ -296,7 +296,7 @@ async def maybe_autonomous_decision_guard(
 async def maybe_bootstrap_finalize_guard(
     service: "SessionService",
     session: Session,
-    user_message: str,
+    turn_kind: str | None,
     tools_called: set[str] | list[str],
 ) -> bool:
     from src.session.orchestrator_profile import is_orchestrator_session
@@ -310,7 +310,7 @@ async def maybe_bootstrap_finalize_guard(
             await maybe_retry_bootstrap_widget(
                 service,
                 session.session_id,
-                user_message=user_message,
+                turn_kind=turn_kind,
                 tools_called=tools_called,
                 session_config=dict(session.config),
             )
@@ -348,6 +348,6 @@ async def run_resend_guards(
         dict(current.config),
     ):
         return True
-    if await maybe_autonomous_decision_guard(service, session, user_message, tools_called, turn_kind):
+    if await maybe_autonomous_decision_guard(service, session, tools_called, turn_kind):
         return True
-    return await maybe_bootstrap_finalize_guard(service, session, user_message, tools_called)
+    return await maybe_bootstrap_finalize_guard(service, session, turn_kind, tools_called)

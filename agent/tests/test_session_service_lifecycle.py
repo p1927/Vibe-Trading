@@ -83,7 +83,7 @@ def test_second_send_is_refused_while_the_first_run_is_in_flight(tmp_path, monke
         # Post-completion guard pipeline (autonomous-decision / bootstrap-finalize /
         # orchestrator-propose / widget guards) can take a few seconds in-process;
         # 1s was too tight and made this flake (empirically ~2.2s to release, not stuck).
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -101,7 +101,7 @@ def test_claim_is_released_after_the_run_finishes(tmp_path, monkeypatch):
         _stub_agent(service, monkeypatch, {"status": "success", "content": "ok"})
 
         await service.send_message(session.session_id, "one")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -127,7 +127,7 @@ def test_claim_is_released_when_the_agent_raises(tmp_path, monkeypatch):
         monkeypatch.setattr(service, "_run_with_agent", _explode)
 
         await service.send_message(session.session_id, "one")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -174,7 +174,7 @@ def test_cancelled_run_is_cancelled_not_failed(tmp_path, monkeypatch):
         )
 
         await service.send_message(session.session_id, "go")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -203,7 +203,7 @@ def test_metrics_reach_the_attempt_and_the_reply(tmp_path, monkeypatch):
         )
 
         await service.send_message(session.session_id, "backtest")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -279,7 +279,7 @@ def test_claim_is_released_when_pre_run_bookkeeping_fails(tmp_path, monkeypatch)
         monkeypatch.setattr(service.store, "update_attempt", _fail_first)
 
         await service.send_message(session.session_id, "one")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -309,7 +309,7 @@ def test_cancel_before_the_agent_loop_exists_releases_the_claim(tmp_path, monkey
         assert session.session_id in service._inflight
         assert service.cancel_current(session.session_id) is True
 
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if session.session_id not in service._inflight:
                 break
@@ -419,7 +419,7 @@ def test_attempt_records_and_round_trips_its_wall_clock_start():
 
 
 async def _wait_released(service: SessionService, session_id: str) -> None:
-    for _ in range(500):
+    for _ in range(6000):  # polls break early; the budget only matters on a loaded host
         await asyncio.sleep(0.02)
         if session_id not in service._inflight:
             return
@@ -454,7 +454,7 @@ def test_resend_guard_can_start_its_follow_up_turn(tmp_path, monkeypatch):
         _stub_agent(service, monkeypatch, {"status": "success", "content": "ok"})
 
         await service.send_message(session.session_id, "one")
-        for _ in range(500):
+        for _ in range(6000):  # polls break early; the budget only matters on a loaded host
             await asyncio.sleep(0.02)
             if outcomes and session.session_id not in service._inflight:
                 break

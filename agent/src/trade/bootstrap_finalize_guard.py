@@ -17,16 +17,8 @@ def _guard_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def _is_bootstrap_turn(user_message: str) -> bool:
-    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-
-    if not is_autonomous_scheduler_turn(user_message):
-        return False
-    return "bootstrap" in (user_message or "").lower()
-
-
 def needs_bootstrap_finalize_guard(
-    user_message: str,
+    turn_kind: str | None,
     tools_called: set[str] | list[str],
     session_config: dict | None,
 ) -> bool:
@@ -37,7 +29,7 @@ def needs_bootstrap_finalize_guard(
     cfg = session_config or {}
     if not is_autonomous_agent_session(cfg) or cfg.get("e2e_integration_test"):
         return False
-    if not _is_bootstrap_turn(user_message):
+    if turn_kind != "bootstrap":  # D220: the attempt's structured turn_kind, not prompt text
         return False
 
     agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
@@ -81,11 +73,11 @@ async def maybe_retry_bootstrap_widget(
     session_service: Any,
     session_id: str,
     *,
-    user_message: str,
+    turn_kind: str | None,
     tools_called: set[str] | list[str],
     session_config: dict | None,
 ) -> bool:
-    if not needs_bootstrap_finalize_guard(user_message, tools_called, session_config):
+    if not needs_bootstrap_finalize_guard(turn_kind, tools_called, session_config):
         return False
 
     agent_id = str((session_config or {}).get("autonomous_agent_id") or "").strip()

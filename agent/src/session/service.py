@@ -325,7 +325,7 @@ class SessionService:
             session.config["include_shell_tools"] = include_shell_tools
             session.last_attempt_id = attempt.attempt_id
             if turn_kind is None:
-                service_hooks.maybe_mark_autonomous_user_turn(session, content)
+                service_hooks.maybe_mark_autonomous_user_turn(session)
             # Off-loop: this can call the LLM (rate-limited), which must never block the event loop.
             await asyncio.to_thread(service_hooks.maybe_refresh_agent_intent, self, session, content, message.message_id)
             session.updated_at = _utc_now_iso()
@@ -586,6 +586,7 @@ class SessionService:
                     attempt.summary or "",
                     result.get("tools_called") or [],
                     dict(session.config),
+                    attempt.turn_kind,
                 )
                 # The re-prompting guards start a new turn through send_message, which
                 # must claim this session; they run after the finally below releases it.

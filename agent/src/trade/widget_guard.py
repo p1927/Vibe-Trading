@@ -58,17 +58,16 @@ def needs_widget_guard(
     assistant_text: str,
     tools_called: set[str] | list[str],
     session_config: dict | None = None,
+    turn_kind: str | None = None,
 ) -> bool:
     """Return True when agent likely presented options strategy without widget tool."""
     if not _guard_enabled():
         return False
     try:
-        from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
         from src.trade.session_context import is_autonomous_agent_session
 
-        if is_autonomous_agent_session(session_config):
-            if is_autonomous_scheduler_turn(user_message):
-                return False
+        if is_autonomous_agent_session(session_config) and turn_kind:  # D220: structured, not prompt text
+            return False
     except Exception:
         logger.warning("autonomous scheduler-turn check failed in widget guard", exc_info=True)
 
@@ -115,9 +114,10 @@ def maybe_inject_widget(
     assistant_text: str,
     tools_called: set[str] | list[str],
     session_config: dict | None = None,
+    turn_kind: str | None = None,
 ) -> bool:
     """Build and emit trade_plan.widget if guard triggers. Returns True if emitted."""
-    if not needs_widget_guard(user_message, assistant_text, tools_called, session_config):
+    if not needs_widget_guard(user_message, assistant_text, tools_called, session_config, turn_kind):
         return False
 
     ticker = _extract_ticker(user_message, assistant_text, session_config)
