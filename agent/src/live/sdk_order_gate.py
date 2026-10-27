@@ -29,7 +29,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.live import pending_action
-from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired
+from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired, with_enforced_notional
 from src.live.audit import LiveActionEvent, audit_unwritable_reason, write_live_action
 from src.live.daily_count import (
     DailyCountError,
@@ -947,22 +947,7 @@ def _normalize_notional(intent: OrderIntent, connector_module: Any, config: Any)
     CONSERVATIVELY (over-deny, never under-deny). FX normalization is a follow-up
     before HK/CN are promoted past the structural asset-class gate.
     """
-    if intent.quantity is None:
-        return intent
-    implied = _implied_notional(intent, connector_module, config)
-    if implied is None or implied != implied or implied <= 0:
-        return None
-    explicit = intent.notional_usd if intent.notional_usd is not None else 0.0
-    enforced = max(float(explicit), implied)
-    return OrderIntent(
-        symbol=intent.symbol,
-        side=intent.side,
-        notional_usd=enforced,
-        quantity=intent.quantity,
-        instrument_type=intent.instrument_type,
-        asset_class=intent.asset_class,
-        limit_price=intent.limit_price,
-    )
+    return with_enforced_notional(intent, lambda order: _implied_notional(order, connector_module, config))
 
 
 def _implied_notional(intent: OrderIntent, connector_module: Any, config: Any) -> float | None:

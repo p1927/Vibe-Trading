@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
+from src.live.enforcement import OrderIntent
 from src.live.mandate.model import Mandate
 
 # ponytail: substring heuristic over the error text; the ceiling is a transport failure worded in a way not
@@ -25,6 +26,35 @@ def mandate_expired(mandate: Mandate) -> bool:
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) >= expires
+
+
+def with_enforced_notional(
+    intent: OrderIntent, implied_notional: Callable[[OrderIntent], float | None]
+) -> OrderIntent | None:
+    """Stamp one authoritative ``notional_usd`` onto a quantity order (SPEC §4, H3/H4), fail-closed.
+
+    A quantity order is enforced on the LARGER of its explicit notional and ``implied_notional(intent)`` (the
+    caller's own quote source: the MCP guard prices from the adapter's quote tool, the SDK gate from the
+    connector's sizing hook or quote), so a small notional can't smuggle a huge quantity past the caps. Returns
+    ``None`` (deny) when the order cannot be priced or the figure is NaN / non-positive; an order with no
+    quantity passes through unchanged. ``asset_class`` and ``limit_price`` survive the rebuild: ``check_mandate``
+    prefers an explicit asset class over the instrument-type default, so dropping it buckets an HK/A-share
+    order as us_equity."""
+    if intent.quantity is None:
+        return intent
+    implied = implied_notional(intent)
+    if implied is None or implied != implied or implied <= 0:
+        return None
+    explicit = intent.notional_usd if intent.notional_usd is not None else 0.0
+    return OrderIntent(
+        symbol=intent.symbol,
+        side=intent.side,
+        notional_usd=max(float(explicit), implied),
+        quantity=intent.quantity,
+        instrument_type=intent.instrument_type,
+        asset_class=intent.asset_class,
+        limit_price=intent.limit_price,
+    )
 
 
 def error_message(result: object, default: str = "broker order returned an error") -> str:

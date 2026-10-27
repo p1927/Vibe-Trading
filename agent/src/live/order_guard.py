@@ -64,7 +64,7 @@ from src.live.halt import halt_flag_set
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION, Mandate
 from src.live.mandate.store import load_mandate
 from src.live import pending_action
-from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired
+from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired, with_enforced_notional
 from src.live.daily_count import (
     DailyCountError,
     DailyOrderLockUnavailable,
@@ -251,31 +251,11 @@ class LiveOrderGuardTool(MCPRemoteTool):
             A new :class:`OrderIntent` with ``notional_usd`` set to the enforced
             value, or ``None`` when a quantity order cannot be priced.
         """
-        if intent.quantity is None:
-            return intent
+        def implied(order: OrderIntent) -> float | None:
+            price = self._quote_price(order)
+            return None if price is None else order.quantity * buy_worst_case_price(order, price)
 
-        price = self._quote_price(intent)
-        if price is None:
-            return None
-        implied = intent.quantity * buy_worst_case_price(intent, price)
-        if implied != implied or implied <= 0:  # NaN / non-positive → fail-closed
-            return None
-
-        explicit = intent.notional_usd if intent.notional_usd is not None else 0.0
-        enforced = max(float(explicit), implied)
-        return OrderIntent(
-            symbol=intent.symbol,
-            side=intent.side,
-            notional_usd=enforced,
-            quantity=intent.quantity,
-            instrument_type=intent.instrument_type,
-            # asset_class must survive the rebuild: check_mandate prefers an
-            # explicit one over the instrument-type default (enforcement.py:524),
-            # so dropping it buckets an HK/A-share order as us_equity and lets it
-            # past a mandate that permits only us_equity.
-            asset_class=intent.asset_class,
-            limit_price=intent.limit_price,
-        )
+        return with_enforced_notional(intent, implied)
 
     def _quote_price(self, intent: OrderIntent) -> float | None:
         """Return a live USD price for the intent's symbol, fail-closed.
