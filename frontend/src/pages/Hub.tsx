@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
@@ -14,6 +16,13 @@ import { useConfirm } from "@/components/common/useConfirm";
 import { safeHttpUrl } from "@/lib/safeUrl";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
+
+const NEWS_FILTER_LABEL_KEYS = {
+  all: "hub.filterAll",
+  staging: "hub.filterStaging",
+  distilled: "hub.filterDistilled",
+  discarded: "hub.filterDiscarded",
+} as const satisfies Record<NewsFilter, string>;
 
 /** A number field's parsed value, or `fallback` only when the text is not a number (so 0 is a real 0). */
 function numberOr(raw: string, fallback: number, parse: (text: string) => number): number {
@@ -46,48 +55,48 @@ function StatCard({
   );
 }
 
-function provenanceBadge(provenance?: string) {
+function provenanceBadge(t: TFunction, provenance?: string) {
   if (provenance === "discarded") {
     return (
       <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-800 dark:text-red-200">
-        discarded
+        {t("hub.provDiscarded")}
       </span>
     );
   }
   if (provenance === "staging") {
     return (
       <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
-        staging
+        {t("hub.provStaging")}
       </span>
     );
   }
   return (
     <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-      distilled
+      {t("hub.provDistilled")}
     </span>
   );
 }
 
-function statusBadge(status?: string) {
+function statusBadge(t: TFunction, status?: string) {
   const s = (status || "pending").toLowerCase();
   if (s === "approved") {
     return (
       <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
-        verified
+        {t("hub.statusVerified")}
       </span>
     );
   }
   if (s === "partial") {
     return (
       <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-700 dark:text-blue-300">
-        partial
+        {t("hub.statusPartial")}
       </span>
     );
   }
   if (s === "pending") {
     return (
       <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-        pending distill
+        {t("hub.statusPendingDistill")}
       </span>
     );
   }
@@ -96,7 +105,15 @@ function statusBadge(status?: string) {
   );
 }
 
-function marketImpactBadge(status?: string) {
+const IMPACT_LABEL_KEYS = {
+  observed: "hub.impactObserved",
+  predicted: "hub.impactPredicted",
+  claimed: "hub.impactClaimed",
+  unverified: "hub.impactUnverified",
+  no_forecast: "hub.impactNoForecast",
+} as const;
+
+function marketImpactBadge(t: TFunction, status?: string) {
   const s = (status || "unverified").toLowerCase();
   const tone =
     s === "observed"
@@ -114,18 +131,18 @@ function marketImpactBadge(status?: string) {
             : "text-muted-foreground bg-muted";
   return (
     <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
-      {s === "no_forecast" ? "no forecast" : s}
+      {s in IMPACT_LABEL_KEYS ? t(IMPACT_LABEL_KEYS[s as keyof typeof IMPACT_LABEL_KEYS]) : s}
     </span>
   );
 }
 
-function predictionHiddenBadge(item: HubNewsItem) {
+function predictionHiddenBadge(t: TFunction, item: HubNewsItem) {
   if (item.provenance === "staging") return null;
   const refCount = item.ref_count ?? item.references?.length ?? item.sources?.length ?? 1;
   if (refCount >= 2) return null;
   return (
     <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
-      hidden from prediction
+      {t("hub.hiddenFromPrediction")}
     </span>
   );
 }
@@ -166,9 +183,9 @@ function directionHintBadge(hint?: string) {
   );
 }
 
-function enrichmentModeBadge(mode?: string) {
+function enrichmentModeBadge(t: TFunction, mode?: string) {
   if (!mode) return null;
-  const label = mode === "full" ? "full article" : mode === "snippet_fallback" ? "snippet" : mode;
+  const label = mode === "full" ? t("hub.modeFullArticle") : mode === "snippet_fallback" ? t("hub.modeSnippet") : mode;
   return (
     <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
       {label}
@@ -177,6 +194,7 @@ function enrichmentModeBadge(mode?: string) {
 }
 
 function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
+  const { t } = useTranslation();
   const causes = item.cause_indicators ?? [];
   const futureEvents = item.future_events ?? [];
   const opinions = item.article_opinions ?? [];
@@ -190,16 +208,16 @@ function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
     <div className="mt-3 space-y-2 rounded-lg border border-dashed bg-muted/10 p-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Enrichment
+          {t("hub.enrichment")}
         </span>
         {modes.map((mode) => (
-          <span key={mode}>{enrichmentModeBadge(mode)}</span>
+          <span key={mode}>{enrichmentModeBadge(t, mode)}</span>
         ))}
       </div>
 
       {causes.length ? (
         <div>
-          <p className="mb-1 text-[10px] font-medium text-muted-foreground">Cause indicators</p>
+          <p className="mb-1 text-[10px] font-medium text-muted-foreground">{t("hub.causeIndicators")}</p>
           <ul className="space-y-1.5">
             {causes.slice(0, 6).map((cause, idx) => (
               <li
@@ -223,7 +241,7 @@ function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
 
       {futureEvents.length ? (
         <div>
-          <p className="mb-1 text-[10px] font-medium text-muted-foreground">Future timeline</p>
+          <p className="mb-1 text-[10px] font-medium text-muted-foreground">{t("hub.futureTimeline")}</p>
           <ul className="space-y-1.5">
             {futureEvents.slice(0, 6).map((event, idx) => (
               <li
@@ -231,7 +249,7 @@ function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
                 className="rounded-md border bg-background/80 px-2 py-1.5 text-[11px]"
               >
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="font-medium text-foreground">{event.event || "Upcoming event"}</span>
+                  <span className="font-medium text-foreground">{event.event || t("hub.upcomingEvent")}</span>
                   {event.expected_date ? (
                     <span className="text-[10px] tabular-nums text-muted-foreground">{event.expected_date}</span>
                   ) : event.timeline_phrase ? (
@@ -252,12 +270,12 @@ function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
       {opinions.length ? (
         <details className="text-[11px]">
           <summary className="cursor-pointer text-amber-800 hover:text-amber-900 dark:text-amber-200">
-            Article opinions ({opinions.length}) — not used for prediction
+            {t("hub.articleOpinions", { n: opinions.length })}
           </summary>
           <ul className="mt-1 space-y-1 pl-1">
             {opinions.slice(0, 5).map((opinion, idx) => (
               <li key={`opinion-${idx}`} className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1">
-                <p className="text-foreground/90 line-clamp-2">{opinion.text || opinion.kind || "Opinion"}</p>
+                <p className="text-foreground/90 line-clamp-2">{opinion.text || opinion.kind || t("hub.opinionFallback")}</p>
                 {opinion.reason_discarded ? (
                   <p className="text-[10px] text-muted-foreground">{opinion.reason_discarded}</p>
                 ) : null}
@@ -281,6 +299,7 @@ function NewsRow({
   onDiscardSimilar?: (item: HubNewsItem) => void;
   discarding?: boolean;
 }) {
+  const { t } = useTranslation();
   const references = item.references?.length ? item.references : item.sources ?? [];
   const link = safeHttpUrl(item.url || references[0]?.url);
   const timeline = item.timeline ?? [];
@@ -290,11 +309,11 @@ function NewsRow({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            {provenanceBadge(item.provenance)}
-            {statusBadge(item.verification_status)}
-            {item.market_impact_status ? marketImpactBadge(item.market_impact_status) : null}
+            {provenanceBadge(t, item.provenance)}
+            {statusBadge(t, item.verification_status)}
+            {item.market_impact_status ? marketImpactBadge(t, item.market_impact_status) : null}
             {consensusBadge(item.consensus)}
-            {predictionHiddenBadge(item)}
+            {predictionHiddenBadge(t, item)}
             {item.ticker ? (
               <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {item.ticker}
@@ -302,13 +321,13 @@ function NewsRow({
             ) : null}
             {(item.ref_count ?? 0) > 1 ? (
               <span className="text-[10px] tabular-nums text-muted-foreground">
-                {item.ref_count} refs
+                {t("hub.refsN", { n: item.ref_count })}
               </span>
             ) : null}
           </div>
-          <h3 className="text-[13px] font-semibold leading-snug">{item.title || "Untitled"}</h3>
+          <h3 className="text-[13px] font-semibold leading-snug">{item.title || t("hub.untitled")}</h3>
           <p className="text-[11px] text-muted-foreground">
-            {item.source || "unknown source"}
+            {item.source || t("hub.unknownSource")}
             {item.published_at ? ` · ${formatIst(item.published_at)}` : ""}
             {item.event_id ? ` · ${item.event_id.slice(0, 8)}` : item.ref_id ? ` · ${item.ref_id}` : ""}
           </p>
@@ -320,7 +339,7 @@ function NewsRow({
             rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"
           >
-            Open <ExternalLink className="h-3 w-3" />
+            {t("hub.open")} <ExternalLink className="h-3 w-3" />
           </a>
         ) : null}
         {onDiscard ? (
@@ -331,7 +350,7 @@ function NewsRow({
               onClick={() => onDiscard(item)}
               className="rounded-md border border-red-500/30 px-2 py-1 text-[10px] text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
             >
-              Discard
+              {t("hub.discard")}
             </button>
             {onDiscardSimilar ? (
               <button
@@ -340,7 +359,7 @@ function NewsRow({
                 onClick={() => onDiscardSimilar(item)}
                 className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
               >
-                Discard similar
+                {t("hub.discardSimilar")}
               </button>
             ) : null}
           </div>
@@ -356,24 +375,24 @@ function NewsRow({
       {references.length ? (
         <details className="mt-2 text-[11px]">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            References ({references.length})
+            {t("hub.referencesN", { n: references.length })}
           </summary>
           <ul className="mt-1 space-y-1 pl-1">
             {references.map((ref, idx) => {
               const refUrl = safeHttpUrl(ref.url);
-              const label = ref.title || ref.publisher || ref.source || ref.vendor || ref.ref_id || `Ref ${idx + 1}`;
+              const label = ref.title || ref.publisher || ref.source || ref.vendor || ref.ref_id || t("hub.refFallback", { n: idx + 1 });
               const refCauses = ref.cause_indicators?.length ?? 0;
               const refFuture = ref.future_events?.length ?? 0;
               return (
                 <li key={`${ref.ref_id || ref.url || idx}`} className="space-y-1">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span className="font-medium text-foreground/90">{label}</span>
-                    {ref.enrichment_mode ? enrichmentModeBadge(ref.enrichment_mode) : null}
+                    {ref.enrichment_mode ? enrichmentModeBadge(t, ref.enrichment_mode) : null}
                     {refCauses ? (
-                      <span className="text-[10px] text-muted-foreground">{refCauses} cause(s)</span>
+                      <span className="text-[10px] text-muted-foreground">{t("hub.causesN", { n: refCauses })}</span>
                     ) : null}
                     {refFuture ? (
-                      <span className="text-[10px] text-muted-foreground">{refFuture} upcoming</span>
+                      <span className="text-[10px] text-muted-foreground">{t("hub.upcomingN", { n: refFuture })}</span>
                     ) : null}
                     {refUrl ? (
                       <a
@@ -396,12 +415,12 @@ function NewsRow({
       {timeline.length ? (
         <details className="mt-2 text-[11px]">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            Event timeline ({timeline.length})
+            {t("hub.eventTimeline", { n: timeline.length })}
           </summary>
           <ul className="mt-1 space-y-1 pl-1">
             {timeline.map((entry, idx) => (
               <li key={`${entry.at || idx}-${entry.kind || "entry"}`} className="text-foreground/90">
-                <span className="font-medium capitalize">{entry.kind || "update"}</span>
+                <span className="font-medium capitalize">{entry.kind || t("hub.timelineUpdate")}</span>
                 {entry.at ? (
                   <span className="text-muted-foreground"> · {formatIst(entry.at)}</span>
                 ) : null}
@@ -430,7 +449,7 @@ function NewsRow({
   );
 }
 
-function relevanceBadge(score?: number, provisional?: boolean) {
+function relevanceBadge(t: TFunction, score?: number, provisional?: boolean) {
   if (typeof score !== "number") return null;
   const tone =
     score > 0.7
@@ -441,7 +460,7 @@ function relevanceBadge(score?: number, provisional?: boolean) {
   return (
     <span
       className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", tone)}
-      title={provisional ? "Provisional (pre-distillation) relevance score" : "Market relevance score"}
+      title={provisional ? t("hub.relevanceProvisionalTitle") : t("hub.relevanceTitle")}
     >
       {score.toFixed(2)}
       {provisional ? "*" : ""}
@@ -464,6 +483,7 @@ function RankedNewsCard({
   onDiscardSimilar?: (item: HubNewsItem) => void;
   discarding?: boolean;
 }) {
+  const { t } = useTranslation();
   const members = item.group_members ?? [];
   const sourceCount = item.source_count ?? members.length ?? 0;
   const link = safeHttpUrl(item.url || item.references?.[0]?.url || item.sources?.[0]?.url);
@@ -472,8 +492,8 @@ function RankedNewsCard({
   return (
     <article className="flex flex-col rounded-lg border bg-background/60 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        {relevanceBadge(item.market_relevance_score, item.market_relevance_provisional)}
-        {provenanceBadge(item.provenance)}
+        {relevanceBadge(t, item.market_relevance_score, item.market_relevance_provisional)}
+        {provenanceBadge(t, item.provenance)}
         {item.ticker ? (
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {item.ticker}
@@ -481,10 +501,10 @@ function RankedNewsCard({
         ) : null}
       </div>
       <h3 className="mt-1.5 text-[13px] font-semibold leading-snug line-clamp-2">
-        {item.title || "Untitled"}
+        {item.title || t("hub.untitled")}
       </h3>
       <p className="mt-1 text-[11px] text-muted-foreground">
-        {item.source || "unknown source"}
+        {item.source || t("hub.unknownSource")}
         {item.published_at ? ` · ${formatIst(item.published_at)}` : ""}
       </p>
       {item.summary ? (
@@ -499,7 +519,7 @@ function RankedNewsCard({
           onClick={onToggleExpand}
           className="mt-2 self-start rounded-md border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50"
         >
-          {expanded ? "Hide sources" : `+${extraSources} more source${extraSources > 1 ? "s" : ""}`}
+          {expanded ? t("hub.hideSources") : t(extraSources > 1 ? "hub.moreSourcesOther" : "hub.moreSourceOne", { n: extraSources })}
         </button>
       ) : null}
 
@@ -507,7 +527,7 @@ function RankedNewsCard({
         <ul className="mt-2 space-y-1 border-t pt-2 text-[11px]">
           {members.map((member, idx) => (
             <li key={member.ref_id || `${member.url}-${idx}`} className="truncate">
-              <span className="text-muted-foreground">{member.source || "source"} · </span>
+              <span className="text-muted-foreground">{member.source || t("hub.sourceFallback")} · </span>
               {safeHttpUrl(member.url) ? (
                 <a
                   href={safeHttpUrl(member.url)}
@@ -518,7 +538,7 @@ function RankedNewsCard({
                   {member.title || member.url}
                 </a>
               ) : (
-                <span>{member.title || "Untitled"}</span>
+                <span>{member.title || t("hub.untitled")}</span>
               )}
             </li>
           ))}
@@ -533,7 +553,7 @@ function RankedNewsCard({
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"
           >
-            Open <ExternalLink className="h-3 w-3" />
+            {t("hub.open")} <ExternalLink className="h-3 w-3" />
           </a>
         ) : null}
         {onDiscard ? (
@@ -543,7 +563,7 @@ function RankedNewsCard({
             onClick={() => onDiscard(item)}
             className="rounded-md border border-red-500/30 px-2 py-1 text-[10px] text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
           >
-            Discard
+            {t("hub.discard")}
           </button>
         ) : null}
         {onDiscardSimilar ? (
@@ -553,7 +573,7 @@ function RankedNewsCard({
             onClick={() => onDiscardSimilar(item)}
             className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
           >
-            Discard similar
+            {t("hub.discardSimilar")}
           </button>
         ) : null}
       </div>
@@ -570,26 +590,27 @@ function DiscardedRow({
   onUndo?: (item: HubDiscardedNewsItem) => void;
   busy?: boolean;
 }) {
+  const { t } = useTranslation();
   const expired = item.expires_at ? new Date(item.expires_at).getTime() < Date.now() : false;
   return (
     <article className="rounded-lg border border-dashed bg-muted/20 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            {provenanceBadge("discarded")}
+            {provenanceBadge(t, "discarded")}
             {item.source_kind ? (
               <span className="text-[10px] text-muted-foreground">{item.source_kind}</span>
             ) : null}
           </div>
-          <h3 className="text-[13px] font-semibold leading-snug">{item.title || "Untitled"}</h3>
+          <h3 className="text-[13px] font-semibold leading-snug">{item.title || t("hub.untitled")}</h3>
           <p className="text-[11px] text-muted-foreground">
-            {item.reason || "discarded"}
+            {item.reason || t("hub.discardedFallback")}
             {item.discarded_at ? ` · ${formatIst(item.discarded_at)}` : ""}
           </p>
           {item.expires_at ? (
             <p className="text-[10px] text-muted-foreground">
-              Expires {item.expires_at.slice(0, 10)}
-              {expired ? " (expired)" : ""}
+              {t("hub.expires", { date: item.expires_at.slice(0, 10) })}
+              {expired ? ` ${t("hub.expired")}` : ""}
             </p>
           ) : null}
         </div>
@@ -600,7 +621,7 @@ function DiscardedRow({
             onClick={() => onUndo(item)}
             className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
           >
-            Undo
+            {t("hub.undo")}
           </button>
         ) : null}
       </div>
@@ -619,6 +640,7 @@ function DiscardedRow({
 }
 
 export function Hub() {
+  const { t } = useTranslation();
   const [confirm, confirmDialog] = useConfirm();
   const [data, setData] = useState<HubStatusResponse | null>(null);
   const [obsSummary, setObsSummary] = useState<ObservabilitySummaryResponse | null>(null);
@@ -672,13 +694,13 @@ export function Hub() {
         });
       const [res, cfgRes, obsRes] = await Promise.all([
         api.getHubStatus("NIFTY", newsQuery),
-        secondary("News pipeline schedule", api.getHubNewsPipelineConfig()),
-        secondary("Open issue count", api.getObservabilitySummary()),
+        secondary(t("hub.secondaryScheduleLabel"), api.getHubNewsPipelineConfig()),
+        secondary(t("hub.secondaryIssueLabel"), api.getObservabilitySummary()),
       ]);
       if (seq !== loadSeq.current) return;
       setData(res);
       setObsSummary(obsRes);
-      setSecondaryError(secondaryErrors.length ? `Could not load ${secondaryErrors.join("; ")}` : null);
+      setSecondaryError(secondaryErrors.length ? t("hub.couldNotLoad", { list: secondaryErrors.join("; ") }) : null);
       // Never clobber an unsaved draft with the 30s poll.
       const cfg = cfgRes?.config;
       if (cfg) {
@@ -691,11 +713,11 @@ export function Hub() {
       }
     } catch (err) {
       if (seq !== loadSeq.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load hub status");
+      setError(err instanceof Error ? err.message : t("hub.loadFailed"));
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [newsQuery]);
+  }, [newsQuery, t]);
 
   useEffect(() => {
     void load();
@@ -792,9 +814,9 @@ export function Hub() {
     if (
       discardSimilar &&
       !(await confirm({
-        title: "Discard similar",
-        description: "Discard this headline and similar items (semantic + topic overlap)?",
-        confirmLabel: "Discard",
+        title: t("hub.discardSimilarTitle"),
+        description: t("hub.discardSimilarDesc"),
+        confirmLabel: t("hub.discard"),
         tone: "destructive",
       }))
     ) {
@@ -811,7 +833,7 @@ export function Hub() {
       });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Discard failed");
+      setError(err instanceof Error ? err.message : t("hub.discardFailed"));
     } finally {
       setBusy(null);
     }
@@ -826,7 +848,7 @@ export function Hub() {
       await api.undoHubNewsDiscard({ entity_id: "NIFTY", discard_id: discardId });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Undo failed");
+      setError(err instanceof Error ? err.message : t("hub.undoFailed"));
     } finally {
       setBusy(null);
     }
@@ -838,11 +860,11 @@ export function Hub() {
     try {
       const res = await api.drainHubStaging("NIFTY", 20);
       if (res.status === "paused") {
-        setError(res.message || "News distillation pipeline is paused — configure MiniMax first.");
+        setError(res.message || t("hub.drainPaused"));
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Staging drain failed");
+      setError(err instanceof Error ? err.message : t("hub.drainFailed"));
     } finally {
       setBusy(null);
     }
@@ -854,11 +876,11 @@ export function Hub() {
     try {
       const res = await api.runHubNewsIngest({ mode, ticker: "NIFTY" });
       if (res.status === "paused") {
-        setError(res.message || "News ingest is paused — check the MiniMax/NVIDIA model adapter configuration.");
+        setError(res.message || t("hub.ingestPaused"));
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${mode} ingest failed`);
+      setError(err instanceof Error ? err.message : t(mode === "full" ? "hub.ingestFullFailed" : "hub.ingestLightFailed"));
     } finally {
       setBusy(null);
     }
@@ -871,27 +893,27 @@ export function Hub() {
     try {
       const res = await api.runHubNewsMaintenance("NIFTY", 365);
       if (res.status === "paused") {
-        setError(res.message || "Maintainer paused — check the migration state or the MiniMax/NVIDIA model adapter configuration.");
+        setError(res.message || t("hub.maintainerPaused"));
       } else if (res.summary?.had_errors) {
-        setError("Maintainer finished with errors — see stage summary below.");
+        setError(t("hub.maintainerErrors"));
       }
       const summary = res.summary;
       if (summary && typeof summary === "object") {
         const compact = summary.compact_events as Record<string, unknown> | undefined;
         const parts = [
-          compact?.groups_merged != null ? `${String(compact.groups_merged)} merged` : null,
-          compact?.rows_removed != null ? `${String(compact.rows_removed)} removed` : null,
+          compact?.groups_merged != null ? t("hub.partMerged", { n: String(compact.groups_merged) }) : null,
+          compact?.rows_removed != null ? t("hub.partRemoved", { n: String(compact.rows_removed) }) : null,
           summary.repair && typeof summary.repair === "object"
-            ? `${String((summary.repair as Record<string, unknown>).repaired ?? 0)} repaired`
+            ? t("hub.partRepaired", { n: String((summary.repair as Record<string, unknown>).repaired ?? 0) })
             : null,
         ].filter(Boolean);
         if (parts.length) {
-          setMaintainerSummary(`Maintainer: ${parts.join(" · ")}`);
+          setMaintainerSummary(t("hub.maintainerSummary", { parts: parts.join(" · ") }));
         }
       }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Maintainer run failed");
+      setError(err instanceof Error ? err.message : t("hub.maintainerFailed"));
     } finally {
       setBusy(null);
     }
@@ -935,7 +957,7 @@ export function Hub() {
         pipelineBaseline.current = res.config;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save pipeline config");
+      setError(err instanceof Error ? err.message : t("hub.savePipelineFailed"));
     } finally {
       setBusy(null);
     }
@@ -951,23 +973,23 @@ export function Hub() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">Hub inventory</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{t("hub.title")}</h1>
             {(obsSummary?.open_issue_count ?? 0) > 0 ? (
               <span
                 className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-[11px] font-medium text-red-800 dark:text-red-200"
-                title="Open observability issues (Tier 0)"
+                title={t("hub.openIssuesTitle")}
               >
-                {obsSummary?.open_issue_count} open issue{(obsSummary?.open_issue_count ?? 0) === 1 ? "" : "s"}
+                {t((obsSummary?.open_issue_count ?? 0) === 1 ? "hub.openIssueOne" : "hub.openIssueOther", { n: obsSummary?.open_issue_count })}
               </span>
             ) : null}
           </div>
           <ObservabilityIssuesPanel refreshKey={obsSummary?.open_issue_count} />
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Live news union (staging refs + distilled hub events), references, cache health, and capture stats.
+            {t("hub.subtitle")}
           </p>
           {hub?.generated_at ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Updated {formatIst(hub.generated_at)} · auto-refresh 30s
+              {t("hub.updated", { when: formatIst(hub.generated_at) })}
             </p>
           ) : null}
         </div>
@@ -980,7 +1002,7 @@ export function Hub() {
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm hover:bg-muted/50"
         >
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-          Refresh
+          {t("hub.refresh")}
         </button>
       </div>
 
@@ -999,13 +1021,12 @@ export function Hub() {
           role="status"
           className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
         >
-          <p className="font-medium">News distillation paused</p>
+          <p className="font-medium">{t("hub.distillationPaused")}</p>
           <p className="mt-1 text-[13px] leading-relaxed opacity-90">
-            {staging.pause_reason ||
-              "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
+            {staging.pause_reason || t("hub.pauseReasonDefault")}
           </p>
           <p className="mt-2 text-[12px] tabular-nums opacity-80">
-            {newsInventory?.pending_count ?? staging.queued ?? "—"} headline(s) waiting in staging queue.
+            {t("hub.headlinesWaiting", { n: newsInventory?.pending_count ?? staging.queued ?? "—" })}
           </p>
         </div>
       ) : null}
@@ -1016,12 +1037,10 @@ export function Hub() {
           data-testid="wiki-deferred-banner"
           className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
         >
-          <p className="font-medium">LLM-Wiki is not running</p>
+          <p className="font-medium">{t("hub.wikiNotRunning")}</p>
           <p className="mt-1 text-[13px] leading-relaxed opacity-90">
-            {staging.user_message ||
-              "Start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env."}{" "}
-            Only the wiki-dependent steps (search dedup, the wiki rescan) wait; news ingest, verification and story
-            creation keep running.
+            {staging.user_message || t("hub.wikiDefaultMessage")}{" "}
+            {t("hub.wikiDeferredNote")}
           </p>
         </div>
       ) : null}
@@ -1031,7 +1050,7 @@ export function Hub() {
           role="status"
           className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
         >
-          <p className="font-medium">Data source degradation</p>
+          <p className="font-medium">{t("hub.dataDegradation")}</p>
           <ul className="mt-1 list-disc space-y-1 pl-4 text-[13px] leading-relaxed opacity-90">
             {hub?.data_warnings?.map((warning, idx) => <li key={idx}>{warning}</li>)}
           </ul>
@@ -1041,40 +1060,39 @@ export function Hub() {
       {loading && !hub ? (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading hub status…
+          {t("hub.loadingHub")}
         </div>
       ) : null}
 
       {pipelineDraft ? (
-        <StatCard title="News pipeline schedule" className="col-span-full">
+        <StatCard title={t("hub.scheduleTitle")} className="col-span-full">
           <details
             open={scheduleExpanded}
             onToggle={(e) => setScheduleExpanded((e.target as HTMLDetailsElement).open)}
           >
             <summary className="cursor-pointer select-none text-[12px] font-medium text-foreground">
-              {scheduleExpanded ? "Hide schedule settings" : "Show schedule settings"}
+              {scheduleExpanded ? t("hub.hideSchedule") : t("hub.showSchedule")}
             </summary>
             <p className="mb-3 mt-2 text-[12px] text-muted-foreground">
-              Full ingest runs all sources once daily; light ingest keeps RSS and watcher fresh between runs.
-              Overrides persist in hub config (env supplies defaults).
+              {t("hub.scheduleHelp")}
             </p>
             <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Full ingest cron</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblFullCron")}</span>
               <RepeatIntervalPicker
                 value={pipelineDraft.full_ingest_cron ?? ""}
                 onChange={(v) => patchDraft({ full_ingest_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Light ingest cron</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblLightCron")}</span>
               <RepeatIntervalPicker
                 value={pipelineDraft.light_ingest_cron ?? ""}
                 onChange={(v) => patchDraft({ light_ingest_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Entity drain cron</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblDrainCron")}</span>
               <RepeatIntervalPicker
                 value={pipelineDraft.entity_drain_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_drain_cron: v })}
@@ -1082,7 +1100,7 @@ export function Hub() {
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">
-                Maintainer cron (repair · backfill · merge · cleanup)
+                {t("hub.lblMaintainerCron")}
               </span>
               <RepeatIntervalPicker
                 value={pipelineDraft.entity_maintenance_cron ?? ""}
@@ -1090,14 +1108,14 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Continuous drain cron</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblContinuousCron")}</span>
               <RepeatIntervalPicker
                 value={pipelineDraft.entity_drain_continuous_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_drain_continuous_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Batch size</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblBatchSize")}</span>
               <input
                 type="number"
                 min={20}
@@ -1108,7 +1126,7 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Cluster threshold (semantic dedup)</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblClusterThreshold")}</span>
               <input
                 type="number"
                 min={0.5}
@@ -1120,7 +1138,7 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Full sources</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblFullSources")}</span>
               <input
                 type="text"
                 value={pipelineDraft.full_ingest_sources ?? "all"}
@@ -1129,7 +1147,7 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Light sources</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblLightSources")}</span>
               <input
                 type="text"
                 value={pipelineDraft.light_ingest_sources ?? "rss,watcher"}
@@ -1144,10 +1162,10 @@ export function Hub() {
                 onChange={(e) => patchDraft({ relevance_gate_enabled: e.target.checked })}
                 className="rounded border-border"
               />
-              Relevance gate (auto-discard irrelevant)
+              {t("hub.lblRelevanceGate")}
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Min relevance confidence</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblMinRelevance")}</span>
               <input
                 type="number"
                 min={0}
@@ -1167,10 +1185,10 @@ export function Hub() {
                 onChange={(e) => patchDraft({ wiki_search_enabled: e.target.checked })}
                 className="rounded border-border"
               />
-              Wiki search dedup (compaction uses LLM Wiki before semantic pass)
+              {t("hub.lblWikiDedup")}
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Wiki search top K</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblWikiTopK")}</span>
               <input
                 type="number"
                 min={1}
@@ -1182,7 +1200,7 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Wiki queries per compaction pass</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblWikiQueries")}</span>
               <input
                 type="number"
                 min={1}
@@ -1196,7 +1214,7 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Wiki match min score</span>
+              <span className="text-[11px] text-muted-foreground">{t("hub.lblWikiMinScore")}</span>
               <input
                 type="number"
                 min={0.5}
@@ -1219,7 +1237,7 @@ export function Hub() {
               onClick={() => void runIngest("full")}
               className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
             >
-              {busy === "ingest-full" ? "Running full…" : "Run full ingest now"}
+              {busy === "ingest-full" ? t("hub.runningFull") : t("hub.btnRunFull")}
             </button>
             <button
               type="button"
@@ -1227,7 +1245,7 @@ export function Hub() {
               onClick={() => void runIngest("light")}
               className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
             >
-              {busy === "ingest-light" ? "Running light…" : "Run light ingest now"}
+              {busy === "ingest-light" ? t("hub.runningLight") : t("hub.btnRunLight")}
             </button>
             <button
               type="button"
@@ -1235,7 +1253,7 @@ export function Hub() {
               onClick={() => void runMaintenance()}
               className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
             >
-              {busy === "maintenance" ? "Running maintainer…" : "Run maintainer now"}
+              {busy === "maintenance" ? t("hub.runningMaintainer") : t("hub.btnRunMaintainer")}
             </button>
             <button
               type="button"
@@ -1243,16 +1261,16 @@ export function Hub() {
               onClick={() => void savePipelineConfig()}
               className="rounded-md bg-primary px-3 py-1.5 text-[12px] text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
-              {busy === "save-pipeline" ? "Saving…" : "Save schedule"}
+              {busy === "save-pipeline" ? t("hub.saving") : t("hub.btnSaveSchedule")}
             </button>
             {pipelineConfig?.config_path ? (
-              <span className="text-[10px] text-muted-foreground">Config: {pipelineConfig.config_path}</span>
+              <span className="text-[10px] text-muted-foreground">{t("hub.configPath", { path: pipelineConfig.config_path })}</span>
             ) : null}
           </div>
         </StatCard>
       ) : null}
 
-      <StatCard title="News & references" className="col-span-full">
+      <StatCard title={t("hub.newsAndReferences")} className="col-span-full">
         <div className="mb-3 inline-flex rounded-lg border p-0.5 text-[11px]">
           {(["list", "pipeline", "events"] as const).map((key) => (
             <button
@@ -1264,7 +1282,7 @@ export function Hub() {
                 newsView === key ? "bg-muted font-medium" : "text-muted-foreground",
               )}
             >
-              {key === "pipeline" ? "Pipeline view" : key === "events" ? "Events" : "List"}
+              {key === "pipeline" ? t("hub.viewPipeline") : key === "events" ? t("hub.viewEvents") : t("hub.viewList")}
               {/* Sourced from hub.news_pipeline (already on the wire from /trade/hub/status),
                   not a second request -- the point is to show there is something to review
                   without having to open the tab first. */}
@@ -1285,7 +1303,7 @@ export function Hub() {
                 type="text"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Search headlines…"
+                placeholder={t("hub.searchPlaceholder")}
                 className="w-full rounded-full border bg-background py-1.5 pl-9 pr-3 text-[12px] outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
@@ -1300,7 +1318,7 @@ export function Hub() {
                     newsSection === key ? "bg-muted font-medium" : "text-muted-foreground",
                   )}
                 >
-                  {key === "ranked" ? "Ranked" : `All news (${ALL_NEWS_WINDOW_HOURS}h)`}
+                  {key === "ranked" ? t("hub.sectionRanked") : t("hub.sectionAll", { hours: ALL_NEWS_WINDOW_HOURS })}
                 </button>
               ))}
             </div>
@@ -1311,19 +1329,19 @@ export function Hub() {
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Newspaper className="h-4 w-4 text-muted-foreground" />
             <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">
-              {newsInventory?.pending_count ?? staging?.queued ?? "—"} pending in queue
+              {t("hub.pendingInQueue", { n: newsInventory?.pending_count ?? staging?.queued ?? "—" })}
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums">
-              {newsInventory?.staging_in_union ?? "—"} staging live
+              {t("hub.stagingLive", { n: newsInventory?.staging_in_union ?? "—" })}
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums">
-              {newsInventory?.distilled_in_union ?? "—"} distilled
+              {t("hub.distilledN", { n: newsInventory?.distilled_in_union ?? "—" })}
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums text-red-700 dark:text-red-300">
-              {newsInventory?.discarded_count ?? "—"} discarded (30d)
+              {t("hub.discardedN", { n: newsInventory?.discarded_count ?? "—" })}
             </span>
           </div>
           {newsView === "list" ? (
@@ -1339,7 +1357,7 @@ export function Hub() {
                       newsFilter === key ? "bg-muted font-medium" : "text-muted-foreground",
                     )}
                   >
-                    {key}
+                    {t(NEWS_FILTER_LABEL_KEYS[key])}
                   </button>
                 ))}
               </div>
@@ -1350,7 +1368,7 @@ export function Hub() {
                   onChange={(e) => setShowQueue(e.target.checked)}
                   className="rounded border-border"
                 />
-                Raw queue only
+                {t("hub.rawQueueOnly")}
               </label>
               <button
                 type="button"
@@ -1358,7 +1376,7 @@ export function Hub() {
                 onClick={() => void drainStaging()}
                 className="rounded-md border px-2 py-1 text-[11px] hover:bg-muted/50 disabled:opacity-50"
               >
-                {busy === "drain" ? "Draining…" : "Drain staging (20)"}
+                {busy === "drain" ? t("hub.draining") : t("hub.drainStaging")}
               </button>
             </div>
           ) : null}
@@ -1376,9 +1394,7 @@ export function Hub() {
           <EventsCalendar />
         ) : !filteredNews.length ? (
           <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-            {newsFilter === "discarded"
-              ? "No discarded headlines in the retention window."
-              : "No headlines in this view. Run analysis with constituents refresh or wait for news ingest — pending refs appear here with staging provenance until the worker distills them."}
+            {newsFilter === "discarded" ? t("hub.emptyDiscarded") : t("hub.emptyNews")}
           </p>
         ) : newsFilter === "discarded" ? (
           <div className="grid gap-2 md:grid-cols-2">
@@ -1425,7 +1441,7 @@ export function Hub() {
         {newsView === "list" && filteredNews.length ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
             <span className="tabular-nums">
-              {newsRangeStart}–{newsRangeEnd} of {totalNewsCount}
+              {t("hub.rangeOf", { start: newsRangeStart, end: newsRangeEnd, total: totalNewsCount })}
             </span>
             <div className="flex items-center gap-1.5">
               <button
@@ -1434,16 +1450,16 @@ export function Hub() {
                 onClick={() => setNewsPage((prev) => Math.max(1, prev - 1))}
                 className="rounded-md border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
               >
-                Previous
+                {t("hub.previous")}
               </button>
-              <span className="tabular-nums">Page {newsPage}</span>
+              <span className="tabular-nums">{t("hub.pageN", { n: newsPage })}</span>
               <button
                 type="button"
                 disabled={!hasMoreNews}
                 onClick={() => setNewsPage((prev) => prev + 1)}
                 className="rounded-md border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
               >
-                Next
+                {t("hub.next")}
               </button>
             </div>
           </div>
@@ -1451,20 +1467,26 @@ export function Hub() {
       </StatCard>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatCard title="Staging queue">
+        <StatCard title={t("hub.cardStagingQueue")}>
           <div className="space-y-1 text-sm">
             <p>
-              <span className="text-muted-foreground">Queued:</span>{" "}
+              <span className="text-muted-foreground">{t("hub.queued")}</span>{" "}
               <span className="font-semibold tabular-nums">{staging?.queued ?? "—"}</span>
             </p>
             <p className="text-[11px] text-muted-foreground">
-              Entity pipeline:{" "}
-              {staging?.entity_pipeline_enabled === undefined ? "unknown" : staging.entity_pipeline_enabled ? "on" : "off"}
+              {t("hub.entityPipeline", {
+                state:
+                  staging?.entity_pipeline_enabled === undefined
+                    ? t("hub.unknown")
+                    : staging.entity_pipeline_enabled
+                      ? t("hub.on")
+                      : t("hub.off"),
+              })}
             </p>
             {staging?.worker_last ? (
               <p className="text-[11px] text-muted-foreground">
-                Last worker: {staging.worker_last.processed ?? "—"} processed
-                {(staging.worker_last.errors ?? 0) > 0 ? ` · ${staging.worker_last.errors} errors` : ""}
+                {t("hub.lastWorker", { processed: staging.worker_last.processed ?? "—" })}
+                {(staging.worker_last.errors ?? 0) > 0 ? t("hub.workerErrors", { n: staging.worker_last.errors }) : ""}
               </p>
             ) : null}
           </div>
@@ -1480,13 +1502,13 @@ export function Hub() {
           ) : null}
         </StatCard>
 
-        <StatCard title="Verified news (counts)">
+        <StatCard title={t("hub.cardVerified")}>
           {verified ? (
             <ul className="space-y-2 text-sm">
               {Object.entries(verified).map(([ticker, row]) => (
                 <li key={ticker}>
                   <span className="font-medium">{ticker}</span>
-                  <span className="ml-2 tabular-nums text-muted-foreground">{row.total} records</span>
+                  <span className="ml-2 tabular-nums text-muted-foreground">{t("hub.recordsN", { n: row.total })}</span>
                   {row.by_status ? (
                     <p className="text-[11px] text-muted-foreground">
                       {Object.entries(row.by_status)
@@ -1498,100 +1520,102 @@ export function Hub() {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">No verified news stats</p>
+            <p className="text-sm text-muted-foreground">{t("hub.noVerified")}</p>
           )}
         </StatCard>
 
-        <StatCard title="Index research">
+        <StatCard title={t("hub.cardIndexResearch")}>
           {indexResearch?.present ? (
             <div className="space-y-1 text-sm">
               <p>
-                <span className="text-muted-foreground">As of:</span>{" "}
+                <span className="text-muted-foreground">{t("hub.asOf")}</span>{" "}
                 {indexResearch.as_of ? formatIst(indexResearch.as_of) : "—"}
               </p>
               <p>
-                <span className="text-muted-foreground">Horizon:</span>{" "}
-                {indexResearch.horizon?.days ?? "—"}d ({indexResearch.horizon?.name ?? "?"})
+                <span className="text-muted-foreground">{t("hub.horizon")}</span>{" "}
+                {t("hub.horizonValue", { days: indexResearch.horizon?.days ?? "—", name: indexResearch.horizon?.name ?? "?" })}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Last stage: {indexResearch.last_pipeline_stage ?? "—"}
+                {t("hub.lastStage", { stage: indexResearch.last_pipeline_stage ?? "—" })}
                 {indexResearch.last_pipeline_message ? ` — ${indexResearch.last_pipeline_message}` : ""}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No index snapshot — run analysis on Prediction tab</p>
+            <p className="text-sm text-muted-foreground">{t("hub.noIndexSnapshot")}</p>
           )}
         </StatCard>
 
-        <StatCard title="Constituent cache">
+        <StatCard title={t("hub.cardConstituentCache")}>
           {constituentCache ? (
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>
-                <p className="text-[11px] text-muted-foreground">Fresh</p>
+                <p className="text-[11px] text-muted-foreground">{t("hub.fresh")}</p>
                 <p className="text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                   {constituentCache.fresh}
                 </p>
               </div>
               <div>
-                <p className="text-[11px] text-muted-foreground">Stale</p>
+                <p className="text-[11px] text-muted-foreground">{t("hub.stale")}</p>
                 <p className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">
                   {constituentCache.stale}
                 </p>
               </div>
               <div>
-                <p className="text-[11px] text-muted-foreground">Missing</p>
+                <p className="text-[11px] text-muted-foreground">{t("hub.missing")}</p>
                 <p className="text-lg font-semibold tabular-nums">{constituentCache.missing}</p>
               </div>
               <div>
-                <p className="text-[11px] text-muted-foreground">Total</p>
+                <p className="text-[11px] text-muted-foreground">{t("hub.total")}</p>
                 <p className="text-lg font-semibold tabular-nums">{constituentCache.total}</p>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Not reported by the hub</p>
+            <p className="text-sm text-muted-foreground">{t("hub.notReported")}</p>
           )}
         </StatCard>
 
-        <StatCard title="Capture registry">
+        <StatCard title={t("hub.cardCaptureRegistry")}>
           <div className="flex items-start gap-2">
             <Database className="mt-0.5 h-4 w-4 text-muted-foreground" aria-hidden />
             <div className="space-y-1 text-sm">
               <p>
-                <span className="text-muted-foreground">Enabled:</span>{" "}
-                {capture?.stats?.capture_enabled === undefined ? "unknown" : capture.stats.capture_enabled ? "yes" : "no"}
+                <span className="text-muted-foreground">{t("hub.enabled")}</span>{" "}
+                {capture?.stats?.capture_enabled === undefined ? t("hub.unknown") : capture.stats.capture_enabled ? t("hub.yes") : t("hub.no")}
               </p>
               {capture?.stats?.channel ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Hub hits {capture.stats.channel.hub_hits ?? "—"} · vendor fetches{" "}
-                  {capture.stats.channel.vendor_fetches ?? "—"}
+                  {t("hub.hubHits", {
+                    hits: capture.stats.channel.hub_hits ?? "—",
+                    fetches: capture.stats.channel.vendor_fetches ?? "—",
+                  })}
                 </p>
               ) : null}
             </div>
           </div>
         </StatCard>
 
-        <StatCard title="Factor coverage">
+        <StatCard title={t("hub.cardFactorCoverage")}>
           {factorCoverage ? (
             <div className="space-y-1 text-sm">
               <p>
-                <span className="text-muted-foreground">Gate min:</span>{" "}
+                <span className="text-muted-foreground">{t("hub.gateMin")}</span>{" "}
                 <span className="font-semibold tabular-nums">{factorCoverage.min_pct == null ? "—" : `${factorCoverage.min_pct}%`}</span>
                 {" · "}
-                {factorCoverage.passes_gate ? "pass" : "fail"}
+                {factorCoverage.passes_gate ? t("hub.pass") : t("hub.fail")}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Trading days {factorCoverage.trading_days ?? "—"}
+                {t("hub.tradingDays", { n: factorCoverage.trading_days ?? "—" })}
                 {factorCoverage.start && factorCoverage.end
                   ? ` · ${factorCoverage.start} → ${factorCoverage.end}`
                   : ""}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Not reported by the hub</p>
+            <p className="text-sm text-muted-foreground">{t("hub.notReported")}</p>
           )}
         </StatCard>
 
-        <StatCard title="Source health">
+        <StatCard title={t("hub.cardSourceHealth")}>
           {(sourceAvailability?.length ?? 0) > 0 ? (
             <ul className="max-h-40 space-y-1 overflow-y-auto text-[11px]">
               {sourceAvailability?.slice(0, 12).map((row) => (
@@ -1610,44 +1634,44 @@ export function Hub() {
                           : "text-red-600 dark:text-red-400",
                     )}
                   >
-                    {row.status ?? "unknown"}
+                    {row.status ?? t("hub.unknown")}
                   </span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">No source circuit data</p>
+            <p className="text-sm text-muted-foreground">{t("hub.noSourceData")}</p>
           )}
         </StatCard>
 
-        <StatCard title="Last maintainer run">
+        <StatCard title={t("hub.cardLastMaintainer")}>
           {newsMaintainer?.present ? (
             <div className="space-y-1 text-sm">
               <p>
-                <span className="text-muted-foreground">Status:</span>{" "}
+                <span className="text-muted-foreground">{t("hub.statusLabel")}</span>{" "}
                 {newsMaintainer.had_errors ? (
-                  <span className="text-amber-700 dark:text-amber-300">errors</span>
+                  <span className="text-amber-700 dark:text-amber-300">{t("hub.statusErrors")}</span>
                 ) : (
-                  <span className="text-emerald-700 dark:text-emerald-300">ok</span>
+                  <span className="text-emerald-700 dark:text-emerald-300">{t("hub.statusOk")}</span>
                 )}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Mode {newsMaintainer.mode ?? "maintenance"} · {newsMaintainer.stages?.length ?? 0} stages
+                {t("hub.maintainerMode", { mode: newsMaintainer.mode ?? t("hub.maintainerModeDefault"), n: newsMaintainer.stages?.length ?? 0 })}
               </p>
               <p className="text-[11px] text-muted-foreground">
                 {newsMaintainer.finished_at
-                  ? `Finished ${formatIst(newsMaintainer.finished_at)}`
-                  : "Finish time not recorded"}
+                  ? t("hub.finishedAt", { when: formatIst(newsMaintainer.finished_at) })
+                  : t("hub.noFinishTime")}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No maintenance run recorded yet</p>
+            <p className="text-sm text-muted-foreground">{t("hub.noMaintenance")}</p>
           )}
         </StatCard>
       </div>
 
       {hub?.paths ? (
-        <StatCard title="Hub paths">
+        <StatCard title={t("hub.cardHubPaths")}>
           <ul className="space-y-1 font-mono text-[11px] text-muted-foreground">
             {Object.entries(hub.paths).map(([key, path]) => (
               <li key={key}>
