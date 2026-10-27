@@ -1780,5 +1780,28 @@
       "delete": "Excluir",
       "configured": "Credenciais necessárias configuradas"
     }
+  },
+  "modelAdapters": {
+    "title": "Adaptadores de modelo",
+    "refresh": "Atualizar",
+    "intro": "Provedores de LLM/embeddings usados pelo pipeline de notícias. O adaptador habilitado de maior prioridade de cada tipo é usado primeiro; desabilitar um percorre automaticamente sua cadeia de fallback.",
+    "generativeAdapters": "Adaptadores generativos",
+    "embeddingAdapters": "Adaptadores de embeddings",
+    "noGenerative": "Nenhum adaptador generativo está habilitado, então a destilação de notícias pausa, a menos que o fallback por regras esteja ativo.",
+    "enabled": "habilitado",
+    "disabled": "desabilitado",
+    "priority": "Prioridade",
+    "fallbackAdapter": "Adaptador de fallback",
+    "none": "(nenhum)",
+    "requestsPerMin": "Requisições / min",
+    "requestsPerMinTitle": "Definido pelo ritmo compartilhado da conta MiniMax, não por adaptador.",
+    "requestsPerMinShared": "Requisições / min é o ritmo compartilhado da conta MiniMax; não é definido aqui.",
+    "maxConcurrent": "Máx. simultâneas",
+    "save": "Salvar",
+    "saving": "Salvando…",
+    "empty": "Nenhum adaptador de modelo registrado.",
+    "problemPriority": "A prioridade deve ser um número inteiro.",
+    "problemRpm": "Requisições / min deve ser um inteiro de pelo menos 1.",
+    "problemMaxConcurrent": "Máx. simultâneas deve ser um inteiro de pelo menos 1."
   }
 }
