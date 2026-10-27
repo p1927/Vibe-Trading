@@ -537,7 +537,7 @@ def test_openalgo_log_stream_relay_builds_upstream_from_client(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):
     """A valid request relays `OpenAlgoClient.log_stream_url(source, job_id)` server-side."""
-    from src.api import trade_routes
+    from src.api import trade_stock_history_backfill_and_log_routes as trade_routes
     from trade_integrations.execution import openalgo_client as openalgo_client_module
 
     seen: dict = {}
