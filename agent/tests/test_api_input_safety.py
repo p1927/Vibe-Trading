@@ -82,7 +82,7 @@ def test_forecast_engine_run_start_rejects_path_shaped_fields(client: TestClient
 
 def test_dot_segment_path_params_never_reach_the_simulator_url(client: TestClient) -> None:
     # %2e%2e decodes to ".." before routing; the client would have put it, unquoted, in /history/{country}/...
-    with patch("src.api.trade_routes._run_control") as run_control:
+    with patch("src.api.trade_recording_routes._run_control") as run_control:
         for path in (
             "/trade/markets/%2e%2e/factors/gdp",
             "/trade/markets/in/index/%2e%2e",

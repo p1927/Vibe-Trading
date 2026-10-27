@@ -6,7 +6,8 @@ from fastapi import Depends
 from pydantic import BaseModel
 from src.api.security import require_local_or_auth
 from typing import Any, Literal
-from .trade_routes import _run_control, trade_router
+from .trade_recording_routes import _run_control
+from .trade_routes import trade_router
 
 
 @trade_router.get("/markets/registry")
