@@ -50,9 +50,9 @@ def _run(widget: dict, *, strategy: str = "bear_put_spread"):
     fake_rest_client = SimpleNamespace(post=fake_post)
 
     with (
-        patch("src.api.trade_routes.load_trade_widget", return_value=widget),
+        patch("src.api.trade_execution_routes.load_trade_widget", return_value=widget),
         # The risk gate has its own file (test_trade_routes_execute_basket_risk_gate.py); this one is bookkeeping.
-        patch("src.api.trade_routes._assert_basket_passes_risk_gate", return_value="manual_operator"),
+        patch("src.api.trade_execution_routes._assert_basket_passes_risk_gate", return_value="manual_operator"),
         patch(
             "trade_integrations.execution.context_verify.ensure_paper_execution_ready",
             return_value=SimpleNamespace(analyze_mode=True),
@@ -109,8 +109,8 @@ def test_riskprofile_write_failure_does_not_fail_execution():
     fake_rest_client = SimpleNamespace(post=fake_post)
 
     with (
-        patch("src.api.trade_routes.load_trade_widget", return_value=_selector_widget()),
-        patch("src.api.trade_routes._assert_basket_passes_risk_gate", return_value="manual_operator"),
+        patch("src.api.trade_execution_routes.load_trade_widget", return_value=_selector_widget()),
+        patch("src.api.trade_execution_routes._assert_basket_passes_risk_gate", return_value="manual_operator"),
         patch(
             "trade_integrations.execution.context_verify.ensure_paper_execution_ready",
             return_value=SimpleNamespace(analyze_mode=True),

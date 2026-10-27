@@ -107,7 +107,7 @@ def _run(env: _Env, *, widget: dict | None, orders: list[dict] | None, widget_id
         return {"execution_id": "ex_1"}
 
     with (
-        patch("src.api.trade_routes.load_trade_widget", return_value=widget),
+        patch("src.api.trade_execution_routes.load_trade_widget", return_value=widget),
         patch("trade_integrations.execution.context_verify.ensure_paper_execution_ready",
               return_value=SimpleNamespace(analyze_mode=env.analyze)),
         patch("trade_integrations.openalgo.market_context.fetch_market_context",

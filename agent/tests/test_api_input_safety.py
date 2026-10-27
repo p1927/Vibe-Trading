@@ -129,7 +129,7 @@ def test_execute_basket_refuses_agent_widget_even_with_explicit_orders(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     widget = {"underlying": "NIFTY", "autonomous_agent_id": "ag_1", "implementation_steps": []}
-    monkeypatch.setattr("src.api.trade_routes.load_trade_widget", lambda _wid: widget)
+    monkeypatch.setattr("src.api.trade_execution_routes.load_trade_widget", lambda _wid: widget)
     with patch("trade_integrations.execution.enforce.is_bridge_autonomous_agent", return_value=True):
         response = client.post(
             "/trade/execute-basket",
@@ -144,7 +144,7 @@ def test_execute_basket_human_widget_still_reaches_the_broker_stage(
     # Control: a human's own widget gets past the agent check; stop at the
     # unconfigured OpenAlgo key (503) so nothing is sent anywhere.
     widget = {"underlying": "NIFTY", "autonomous_agent_id": None, "implementation_steps": []}
-    monkeypatch.setattr("src.api.trade_routes.load_trade_widget", lambda _wid: widget)
+    monkeypatch.setattr("src.api.trade_execution_routes.load_trade_widget", lambda _wid: widget)
     monkeypatch.setenv("OPENALGO_API_KEY", "")
     response = client.post(
         "/trade/execute-basket",
@@ -156,7 +156,7 @@ def test_execute_basket_human_widget_still_reaches_the_broker_stage(
 def test_execute_basket_free_form_orders_without_a_widget_are_refused(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("src.api.trade_routes.load_trade_widget", lambda _wid: None)
+    monkeypatch.setattr("src.api.trade_execution_routes.load_trade_widget", lambda _wid: None)
     assert client.post("/trade/execute-basket", json={"orders": [{"symbol": "NIFTY", "action": "BUY"}]}).status_code == 400
     response = client.post(
         "/trade/execute-basket",
@@ -166,7 +166,7 @@ def test_execute_basket_free_form_orders_without_a_widget_are_refused(
 
 
 def test_execute_basket_unknown_widget_without_orders_is_404(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("src.api.trade_routes.load_trade_widget", lambda _wid: None)
+    monkeypatch.setattr("src.api.trade_execution_routes.load_trade_widget", lambda _wid: None)
     assert client.post("/trade/execute-basket", json={"widget_id": "tp_NIFTY_abc123def456"}).status_code == 404
 
 
