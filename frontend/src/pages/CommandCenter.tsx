@@ -14,6 +14,7 @@ import {
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { IndexEventsForecastChart } from "@/components/charts/IndexEventsForecastChart";
 import { PriorDayPriceStrip } from "@/components/charts/PriorDayPriceStrip";
+import { LedgerMissesSummary } from "@/components/prediction/LedgerMissesPanel";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
 import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { useSSE, type SSEStatus } from "@/hooks/useSSE";
@@ -690,6 +691,7 @@ export function CommandCenter() {
         <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
           <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} externalReport={news} />
         </div>
+        <LedgerMissesSummary />
       </div>
     </div>
   );

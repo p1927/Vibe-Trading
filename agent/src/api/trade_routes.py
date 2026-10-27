@@ -667,6 +667,14 @@ class IndexMissAnalysisResponse(BaseModel):
     message: str = ""
 
 
+class IndexLedgerMissesResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    counterfactual: List[Dict[str, Any]] = []
+    message: str = ""
+
+
 class IndexDataAuditResponse(BaseModel):
     status: str
     ticker: str = ""
@@ -2135,6 +2143,24 @@ def get_index_prediction_fan_delta(
         return IndexMissAnalysisResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction fan-delta failed for %s", key)
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+
+
+@trade_router.get("/index-prediction/ledger-misses", response_model=IndexLedgerMissesResponse)
+def get_index_ledger_misses(
+    limit: int = 200,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexLedgerMissesResponse:
+    """The live ledger's wrong-direction misses with their RCA, counterfactual and surprise flag (how much, why)."""
+    try:
+        from trade_integrations.dataflows.prediction_ledger_bridge import read_ledger_misses
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        out = read_ledger_misses(limit=max(1, min(limit, 1000)))
+        return IndexLedgerMissesResponse(ticker="NIFTY", **out)
+    except Exception as exc:
+        logger.exception("index-prediction ledger-misses failed")
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 

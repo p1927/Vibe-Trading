@@ -2162,6 +2162,9 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexQuantReviewResponse>(`/trade/index-prediction/quant-review?${params}`);
   },
+  /** The live ledger's reconciled misses: RCA + counterfactual + surprise_flag (same row shape as the backtest miss report). */
+  getIndexLedgerMisses: (limit = 200) =>
+    request<IndexLedgerMissesResponse>(`/trade/index-prediction/ledger-misses?limit=${limit}`),
   getIndexPredictionCounterfactual: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
     const params = new URLSearchParams({
       ticker,
@@ -6745,6 +6748,14 @@ export interface IndexCounterfactualReport {
   };
   rows?: IndexCounterfactualRow[];
   misses?: IndexCounterfactualRow[];
+}
+
+export interface IndexLedgerMissesResponse {
+  status: string;
+  ticker?: string;
+  report?: (IndexMissAnalysisReport & { summary?: { surprise_count?: number } }) | null;
+  counterfactual?: IndexCounterfactualRow[];
+  message?: string;
 }
 
 export interface IndexCounterfactualResponse {

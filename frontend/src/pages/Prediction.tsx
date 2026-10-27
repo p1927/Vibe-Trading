@@ -11,6 +11,7 @@ import { TrackScoreboardPanel } from "@/components/prediction/TrackScoreboardPan
 import { TrackScoreboardProgressPanel } from "@/components/prediction/TrackScoreboardProgressPanel";
 import { pollTrackScoreboardJob } from "@/lib/trackScoreboardUtils";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
+import { LedgerMissesPanel } from "@/components/prediction/LedgerMissesPanel";
 import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionMissAnalysisPanel";
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
 import { ForecastHistorySection } from "@/components/prediction/ForecastHistorySection";
@@ -1160,6 +1161,12 @@ export function Prediction() {
                 highlightDate={missHighlightDate}
                 onRefresh={() => void loadMissAnalysis(true)}
               />
+              <PredictionSectionHeader
+                title="Live ledger misses"
+                subtitle="The reconciled wrong calls of the live ledger: how much each missed by, why, and which were an unmodeled event (surprise)."
+                modelRole="verify"
+              />
+              <LedgerMissesPanel />
             </section>
 
             <section className="space-y-3">
