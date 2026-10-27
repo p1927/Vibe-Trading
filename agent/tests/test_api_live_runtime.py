@@ -24,6 +24,14 @@ import pytest
 import api_server
 
 
+@pytest.fixture(autouse=True)
+def _home_is_path_home(monkeypatch) -> None:
+    """These tests redirect the runtime root through ``Path.home()``, but VIBE_TRADING_HOME wins over it and importing
+    api_server loads a tier's .env (e.g. ~/.vibe-trading-release) AFTER the conftest popped it: the HALT one test
+    tripped leaked into every later test (409s) and the relay tests read a ledger that was not the one they seeded."""
+    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
+
+
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
     # Redirect the runtime root (``~/.vibe-trading``) at the home boundary so the
     # live tree, HALT sentinel, mandate store, and proposal store all resolve
