@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
@@ -12,12 +13,12 @@ import type {
 
 type Tab = "wiki" | "strategies" | "news" | "corpus";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "wiki", label: "Wiki" },
-  { key: "strategies", label: "Strategy Catalog" },
-  { key: "news", label: "News-Derived Concepts" },
-  { key: "corpus", label: "Corpus Health" },
-];
+const TABS = [
+  { key: "wiki", label: "knowledgeEngine.tabWiki" },
+  { key: "strategies", label: "knowledgeEngine.tabStrategies" },
+  { key: "news", label: "knowledgeEngine.tabNews" },
+  { key: "corpus", label: "knowledgeEngine.tabCorpus" },
+] as const satisfies readonly { key: Tab; label: string }[];
 
 function ScoreBadge({ score }: { score?: number | null }) {
   return (
@@ -56,6 +57,7 @@ function SearchBar({ value, onChange, placeholder }: { value: string; onChange: 
 }
 
 function WikiTab() {
+  const { t } = useTranslation();
   const [text, setText] = useState("");
   const [results, setResults] = useState<WikiEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,15 +77,15 @@ function WikiTab() {
       setError(null);
       setResults(res.results);
     } catch (e) {
-      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : t("knowledgeEngine.requestFailed"));
     } finally {
       if (isCurrent()) setLoading(false);
     }
   }, [begin]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(text), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => void load(text), 300);
+    return () => clearTimeout(timer);
   }, [text, load]);
 
   const toggle = async (slug: string) => {
@@ -100,12 +102,12 @@ function WikiTab() {
           setPageContent((prev) => ({ ...prev, [slug]: page.content ?? "" }));
           setPageNote((prev) => ({ ...prev, [slug]: "" }));
         } else {
-          setPageNote((prev) => ({ ...prev, [slug]: "Page not found (or its front matter is unreadable)." }));
+          setPageNote((prev) => ({ ...prev, [slug]: t("knowledgeEngine.pageNotFound") }));
         }
       } catch (e) {
         setPageNote((prev) => ({
           ...prev,
-          [slug]: e instanceof ApiError ? `Failed to load: ${e.message}` : "Failed to load.",
+          [slug]: e instanceof ApiError ? t("knowledgeEngine.loadFailedWith", { message: e.message }) : t("knowledgeEngine.loadFailed"),
         }));
       } finally {
         setPageLoading(null);
@@ -115,15 +117,15 @@ function WikiTab() {
 
   return (
     <div className="space-y-3">
-      <SearchBar value={text} onChange={setText} placeholder="Search the wiki (concepts, terms, playbooks)…" />
+      <SearchBar value={text} onChange={setText} placeholder={t("knowledgeEngine.searchWiki")} />
       {error && <div className="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</div>}
       {loading && !results && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("knowledgeEngine.loading")}
         </div>
       )}
       {!loading && results && results.length === 0 && (
-        <p className="text-sm text-muted-foreground">No wiki entries match.</p>
+        <p className="text-sm text-muted-foreground">{t("knowledgeEngine.noWiki")}</p>
       )}
       <div className="space-y-2">
         {results?.map((entry) => (
@@ -144,7 +146,7 @@ function WikiTab() {
               <div className="mt-3 border-t border-border/60 pt-3 text-xs">
                 {pageLoading === entry.slug ? (
                   <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading page…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("knowledgeEngine.loadingPage")}
                   </div>
                 ) : (
                   <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
@@ -153,7 +155,7 @@ function WikiTab() {
                 )}
                 {entry.sources?.length ? (
                   <div className="mt-2 text-[10px] text-muted-foreground">
-                    Sources: {entry.sources.join(", ")}
+                    {t("knowledgeEngine.sources", { list: entry.sources.join(", ") })}
                   </div>
                 ) : null}
               </div>
@@ -166,6 +168,7 @@ function WikiTab() {
 }
 
 function StrategyCard({ strategy }: { strategy: StrategyEntry }) {
+  const { t } = useTranslation();
   return (
     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
       <div className="flex items-start justify-between gap-2">
@@ -175,24 +178,24 @@ function StrategyCard({ strategy }: { strategy: StrategyEntry }) {
       {strategy.logic && <p className="mt-1 text-xs text-muted-foreground">{strategy.logic}</p>}
       {strategy.when && (
         <p className="mt-1 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">When: </span>
+          <span className="font-medium text-foreground">{t("knowledgeEngine.when")} </span>
           {strategy.when}
         </p>
       )}
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted-foreground sm:grid-cols-3">
         {strategy.market_view && (
           <div>
-            Market view <span className="font-medium text-foreground">{strategy.market_view}</span>
+            {t("knowledgeEngine.marketView")} <span className="font-medium text-foreground">{strategy.market_view}</span>
           </div>
         )}
         {strategy.risk_profile && (
           <div>
-            Risk <span className="font-medium text-foreground">{strategy.risk_profile}</span>
+            {t("knowledgeEngine.risk")} <span className="font-medium text-foreground">{strategy.risk_profile}</span>
           </div>
         )}
         {strategy.horizon_fit && (
           <div>
-            Horizon <span className="font-medium text-foreground">{strategy.horizon_fit}</span>
+            {t("knowledgeEngine.horizon")} <span className="font-medium text-foreground">{strategy.horizon_fit}</span>
           </div>
         )}
       </div>
@@ -204,6 +207,7 @@ function StrategyCard({ strategy }: { strategy: StrategyEntry }) {
 }
 
 function StrategiesTab() {
+  const { t } = useTranslation();
   const [marketView, setMarketView] = useState("");
   const [riskProfile, setRiskProfile] = useState("");
   const [results, setResults] = useState<StrategyEntry[] | null>(null);
@@ -224,15 +228,15 @@ function StrategiesTab() {
       setError(null);
       setResults(res.results);
     } catch (e) {
-      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : t("knowledgeEngine.requestFailed"));
     } finally {
       if (isCurrent()) setLoading(false);
     }
   }, [marketView, riskProfile, begin]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => void load(), 300);
+    return () => clearTimeout(timer);
   }, [load]);
 
   return (
@@ -242,25 +246,25 @@ function StrategiesTab() {
           type="text"
           value={marketView}
           onChange={(e) => setMarketView(e.target.value)}
-          placeholder="Market view (e.g. bullish)"
+          placeholder={t("knowledgeEngine.marketViewPlaceholder")}
           className="w-48 rounded-md border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
         />
         <input
           type="text"
           value={riskProfile}
           onChange={(e) => setRiskProfile(e.target.value)}
-          placeholder="Risk profile (e.g. conservative)"
+          placeholder={t("knowledgeEngine.riskPlaceholder")}
           className="w-48 rounded-md border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
         />
       </div>
       {error && <div className="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</div>}
       {loading && !results && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("knowledgeEngine.loading")}
         </div>
       )}
       {!loading && results && results.length === 0 && (
-        <p className="text-sm text-muted-foreground">No strategies match.</p>
+        <p className="text-sm text-muted-foreground">{t("knowledgeEngine.noStrategies")}</p>
       )}
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {results?.map((s) => (
@@ -272,30 +276,32 @@ function StrategiesTab() {
 }
 
 function NewsConceptCard({ concept, index }: { concept: NewsDerivedConcept; index: number }) {
+  const { t } = useTranslation();
   return (
     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="text-sm font-semibold">
-          {concept.tactic_kind ?? concept.instrument ?? `Concept ${index + 1}`}
+          {concept.tactic_kind ?? concept.instrument ?? t("knowledgeEngine.conceptN", { n: index + 1 })}
         </div>
         <ScoreBadge score={concept.score} />
       </div>
       <p className="mt-1 text-xs text-muted-foreground">{concept.text}</p>
       {concept.trigger_context && (
         <p className="mt-1 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">Trigger: </span>
+          <span className="font-medium text-foreground">{t("knowledgeEngine.trigger")} </span>
           {concept.trigger_context}
         </p>
       )}
       <TagList tags={concept.tags} />
       {concept.source_citation && (
-        <div className="mt-2 text-[10px] text-muted-foreground">Source: {concept.source_citation}</div>
+        <div className="mt-2 text-[10px] text-muted-foreground">{t("knowledgeEngine.source", { citation: concept.source_citation })}</div>
       )}
     </div>
   );
 }
 
 function NewsDerivedTab() {
+  const { t } = useTranslation();
   const [text, setText] = useState("");
   const [results, setResults] = useState<NewsDerivedConcept[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -311,30 +317,29 @@ function NewsDerivedTab() {
       setError(null);
       setResults(res.results);
     } catch (e) {
-      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : t("knowledgeEngine.requestFailed"));
     } finally {
       if (isCurrent()) setLoading(false);
     }
   }, [begin]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(text), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => void load(text), 300);
+    return () => clearTimeout(timer);
   }, [text, load]);
 
   return (
     <div className="space-y-3">
-      <SearchBar value={text} onChange={setText} placeholder="Search news-derived concepts…" />
+      <SearchBar value={text} onChange={setText} placeholder={t("knowledgeEngine.searchNews")} />
       {error && <div className="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</div>}
       {loading && !results && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <Loader2 className="h-4 w-4 animate-spin" /> {t("knowledgeEngine.loading")}
         </div>
       )}
       {!loading && results && results.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          No news-derived concepts yet — these are extracted and verified from live news as they
-          arrive.
+          {t("knowledgeEngine.noNews")}
         </p>
       )}
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -374,6 +379,7 @@ function formatDelta(delta: number): string {
  * (that would pay for an LLM-judge batch on every page load).
  */
 function CorpusHealthTab() {
+  const { t } = useTranslation();
   const [report, setReport] = useState<FinancialKnowledgeCuratorReport | null>(null);
   const [hasRun, setHasRun] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -392,7 +398,7 @@ function CorpusHealthTab() {
       })
       .catch((e) => {
         if (cancelled) return;
-        setError(e instanceof ApiError ? e.message : "Request failed");
+        setError(e instanceof ApiError ? e.message : t("knowledgeEngine.requestFailed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -405,7 +411,7 @@ function CorpusHealthTab() {
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="h-4 w-4 animate-spin" /> {t("knowledgeEngine.loading")}
       </div>
     );
   }
@@ -415,21 +421,20 @@ function CorpusHealthTab() {
   if (!hasRun || !report) {
     return (
       <p className="text-sm text-muted-foreground">
-        The financial-knowledge curator hasn't run yet — its first scheduled run will populate
-        this view.
+        {t("knowledgeEngine.curatorNotRun")}
       </p>
     );
   }
   if (report.skipped) {
     return (
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-sm">
-        <div className="font-medium text-foreground">Last run skipped</div>
+        <div className="font-medium text-foreground">{t("knowledgeEngine.lastRunSkipped")}</div>
         <p className="mt-1 text-xs text-muted-foreground">
           {report.reason === "no_generative_adapter_configured"
-            ? "No generative model adapter is configured, so the curator (which requires an LLM judge) did not run."
+            ? t("knowledgeEngine.noGenerativeAdapter")
             : report.reason}
         </p>
-        <p className="mt-2 text-[10px] text-muted-foreground">Ran at {report.ran_at}</p>
+        <p className="mt-2 text-[10px] text-muted-foreground">{t("knowledgeEngine.ranAt", { at: report.ran_at })}</p>
       </div>
     );
   }
@@ -438,21 +443,21 @@ function CorpusHealthTab() {
 
   return (
     <div className="space-y-4">
-      <div className="text-[10px] text-muted-foreground">Last run: {report.ran_at}</div>
+      <div className="text-[10px] text-muted-foreground">{t("knowledgeEngine.lastRun", { at: report.ran_at })}</div>
 
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-        <div className="text-sm font-semibold">Corpus size &amp; growth</div>
+        <div className="text-sm font-semibold">{t("knowledgeEngine.corpusSize")}</div>
         {buckets.length === 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">No size snapshot available yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("knowledgeEngine.noSnapshot")}</p>
         ) : (
           <div className="mt-2 overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-muted-foreground">
-                  <th className="pb-1 pr-4 font-medium">Directory</th>
-                  <th className="pb-1 pr-4 font-medium">Files</th>
-                  <th className="pb-1 pr-4 font-medium">Size</th>
-                  <th className="pb-1 font-medium">Change since last run</th>
+                  <th className="pb-1 pr-4 font-medium">{t("knowledgeEngine.colDirectory")}</th>
+                  <th className="pb-1 pr-4 font-medium">{t("knowledgeEngine.colFiles")}</th>
+                  <th className="pb-1 pr-4 font-medium">{t("knowledgeEngine.colSize")}</th>
+                  <th className="pb-1 font-medium">{t("knowledgeEngine.colChange")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -477,15 +482,15 @@ function CorpusHealthTab() {
 
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
         <div className="text-sm font-semibold">
-          Flagged raw sources{" "}
+          {t("knowledgeEngine.flaggedSources")}{" "}
           {report.sources && (
             <span className="font-normal text-muted-foreground">
-              ({report.sources.flagged_count} flagged, {report.sources.remaining} unreviewed)
+              {t("knowledgeEngine.flaggedCounts", { flagged: report.sources.flagged_count, remaining: report.sources.remaining })}
             </span>
           )}
         </div>
         {!report.sources?.flagged.length ? (
-          <p className="mt-1 text-xs text-muted-foreground">No sources flagged as low-value/duplicate.</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("knowledgeEngine.noFlaggedSources")}</p>
         ) : (
           <ul className="mt-2 space-y-1.5">
             {report.sources.flagged.map((s) => (
@@ -500,23 +505,25 @@ function CorpusHealthTab() {
 
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
         <div className="text-sm font-semibold">
-          Undistilled wiki pages{" "}
+          {t("knowledgeEngine.undistilled")}{" "}
           {report.distillation && (
             <span className="font-normal text-muted-foreground">
-              ({report.distillation.flagged_count} over {report.distillation.line_threshold} lines,
-              {" "}
-              {report.distillation.scanned} scanned)
+              {t("knowledgeEngine.undistilledCounts", {
+                flagged: report.distillation.flagged_count,
+                threshold: report.distillation.line_threshold,
+                scanned: report.distillation.scanned,
+              })}
             </span>
           )}
         </div>
         {!report.distillation?.flagged.length ? (
-          <p className="mt-1 text-xs text-muted-foreground">No pages flagged as likely raw dumps.</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("knowledgeEngine.noFlaggedPages")}</p>
         ) : (
           <ul className="mt-2 space-y-1.5">
             {report.distillation.flagged.slice(0, 25).map((p) => (
               <li key={p.path} className="text-xs">
                 <span className="font-medium text-foreground">{p.path}</span>
-                <span className="text-muted-foreground"> — {p.lines} lines</span>
+                <span className="text-muted-foreground"> — {t("knowledgeEngine.linesN", { n: p.lines })}</span>
               </li>
             ))}
           </ul>
@@ -525,12 +532,12 @@ function CorpusHealthTab() {
 
       {report.ingest && (
         <div className="text-[10px] text-muted-foreground">
-          Ingest trigger:{" "}
+          {t("knowledgeEngine.ingestTrigger")}{" "}
           {report.ingest.skipped
-            ? `skipped (${report.ingest.reason})`
+            ? t("knowledgeEngine.ingestSkipped", { reason: report.ingest.reason })
             : report.ingest.ok
-              ? "triggered"
-              : `failed (${report.ingest.error})`}
+              ? t("knowledgeEngine.ingestTriggered")
+              : t("knowledgeEngine.ingestFailed", { error: report.ingest.error })}
         </div>
       )}
     </div>
@@ -544,33 +551,33 @@ function CorpusHealthTab() {
  * sees when it reasons about a request.
  */
 export function KnowledgeEngine() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("wiki");
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
       <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
         <div className="mb-3">
-          <div className="text-sm font-semibold">Knowledge Engine</div>
+          <div className="text-sm font-semibold">{t("knowledgeEngine.title")}</div>
           <div className="text-xs text-muted-foreground">
-            Browse the strategy catalog, wiki, and verified news-derived concepts — the same
-            knowledge base the agent draws on.
+            {t("knowledgeEngine.subtitle")}
           </div>
         </div>
 
         <div className="mb-4 flex gap-1 border-b border-border/60">
-          {TABS.map((t) => (
+          {TABS.map((tabDef) => (
             <button
-              key={t.key}
+              key={tabDef.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(tabDef.key)}
               className={cn(
                 "border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-                tab === t.key
+                tab === tabDef.key
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
-              {t.label}
+              {t(tabDef.label)}
             </button>
           ))}
         </div>
