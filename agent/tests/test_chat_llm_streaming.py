@@ -11,6 +11,17 @@ import pytest
 from src.providers.chat import ChatLLM, ProviderStreamError
 
 
+def _provider_env(**provider: str) -> dict[str, str]:
+    """Env for `patch.dict(os.environ, ..., clear=True)`: only the provider variables are blanked.
+
+    A bare `clear=True` also dropped the conftest's sandbox (TRADE_OBSERVABILITY_DIR, ...) and
+    PYTEST_CURRENT_TEST, so the provider-error span wrote to the real checkout's
+    log/observability/events.jsonl and the session-finish tier_state_guard failed the run.
+    """
+    keep = {k: v for k, v in os.environ.items() if k.startswith("TRADE_") or k == "PYTEST_CURRENT_TEST"}
+    return {**keep, **provider}
+
+
 class _FakeChunk:
     def __init__(
         self,
@@ -213,11 +224,7 @@ def test_should_cancel_absent_consumes_full_stream() -> None:
 def test_stream_failure_raises_provider_error_without_silent_fallback() -> None:
     fake = _FakeStreamingLLM(exc=RuntimeError("stream exploded"))
 
-    with patch.dict(
-        os.environ,
-        {"LANGCHAIN_PROVIDER": "deepseek", "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro"},
-        clear=True,
-    ):
+    with patch.dict(os.environ, _provider_env(**{"LANGCHAIN_PROVIDER": "deepseek", "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro"}), clear=True):
         with pytest.raises(ProviderStreamError) as excinfo:
             _client(fake).stream_chat([{"role": "user", "content": "hi"}])
 
@@ -229,15 +236,11 @@ def test_stream_failure_raises_provider_error_without_silent_fallback() -> None:
 def test_stream_error_redacts_configured_secret_values() -> None:
     fake = _FakeStreamingLLM(exc=RuntimeError("bad key sk-live-secret-123456"))
 
-    with patch.dict(
-        os.environ,
-        {
+    with patch.dict(os.environ, _provider_env(**{
             "LANGCHAIN_PROVIDER": "deepseek",
             "LANGCHAIN_MODEL_NAME": "deepseek-v4-pro",
             "DEEPSEEK_API_KEY": "sk-live-secret-123456",
-        },
-        clear=True,
-    ):
+        }), clear=True):
         with pytest.raises(ProviderStreamError) as excinfo:
             _client(fake).stream_chat([{"role": "user", "content": "hi"}])
 
@@ -317,11 +320,7 @@ def test_clean_zero_chunk_stream_falls_back_to_invoke() -> None:
 def test_generic_value_error_still_raises_provider_error() -> None:
     """A ValueError that is NOT the empty-stream signal still surfaces as error."""
     fake = _FakeStreamingLLM(exc=ValueError("malformed request payload"))
-    with patch.dict(
-        os.environ,
-        {"LANGCHAIN_PROVIDER": "zai", "LANGCHAIN_MODEL_NAME": "glm-5.1"},
-        clear=True,
-    ):
+    with patch.dict(os.environ, _provider_env(**{"LANGCHAIN_PROVIDER": "zai", "LANGCHAIN_MODEL_NAME": "glm-5.1"}), clear=True):
         with pytest.raises(ProviderStreamError):
             _client(fake).stream_chat([{"role": "user", "content": "hi"}])
     assert fake.invoke_called is False
