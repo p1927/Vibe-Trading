@@ -20,7 +20,7 @@ from src.scheduled_research.run_outcome import (
     raise_if_run_had_errors,
 )
 from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS, dispatch_timeout_ms_for
-from src.scheduled_research.store import ScheduledResearchJobStore
+from src.scheduled_research.store import ScheduledResearchJobStore, reconcile_default_job
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
@@ -2413,36 +2413,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             logger.info("registered default index research job %s (%s)", job.id, job.schedule)
             continue
 
-        # Reconcile code-defined fields (schedule, prompt, config) into an
-        # already-registered job. Without this, a code change to a job's
-        # schedule or config (e.g. a dispatch_timeout_ms override, a cadence
-        # widen) never reaches any deployment where the job id was already
-        # present in the store — it silently landed as a no-op. Runtime state
-        # (status, last_run_at, consecutive_failures, next_run_at, paused,
-        # delivery, etc.) is untouched; only the fields this function itself
-        # defines are reconciled. `config` is merged rather than replaced so
-        # executor-injected scratch keys (e.g. `_timed_out`,
-        # `_last_result_summary`) survive across boots.
-        # See 2026-08-31-default-job-registration-never-updates-existing-jobs.
-        merged_config = dict(existing.config)
-        merged_config.update(job.config)
-        if (
-            existing.schedule == job.schedule
-            and existing.timezone == job.timezone
-            and existing.prompt == job.prompt
-            and existing.config == merged_config
-        ):
-            continue
-        store.upsert(
-            dataclasses.replace(
-                existing,
-                schedule=job.schedule,
-                timezone=job.timezone,
-                prompt=job.prompt,
-                config=merged_config,
-            )
-        )
-        logger.info(
-            "reconciled default index research job %s (schedule=%s)", job.id, job.schedule
-        )
+        # A code change to an already-stored job reaches it through the one shared reconcile
+        # (store.reconcile_default_job; 2026-08-31-default-job-registration-never-updates-existing-jobs).
+        reconcile_default_job(store, job)
     return created
