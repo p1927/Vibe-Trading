@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useSearchParams } from "react-router";
 import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,31 +41,31 @@ const SECTION_ORDER = [
   "general",
 ] as const;
 
-const SECTION_LABELS: Record<string, string> = {
-  prediction: "Prediction",
-  hub: "Hub / News",
-  knowledge: "Financial Knowledge",
-  options: "Options",
-  trade_data: "Trade Data",
-  autonomous_agent: "Autonomous Agent",
-  recording: "Recording",
-  general: "General",
+const SECTION_LABEL_KEYS = {
+  prediction: "scheduled.section_prediction",
+  hub: "scheduled.section_hub",
+  knowledge: "scheduled.section_knowledge",
+  options: "scheduled.section_options",
+  trade_data: "scheduled.section_trade_data",
+  autonomous_agent: "scheduled.section_autonomous_agent",
+  recording: "scheduled.section_recording",
+  general: "scheduled.section_general",
   // openalgo's five scheduler instances (Mechanism C) — see
   // openalgo/services/scheduler_registry_service.py's VALID_SOURCES.
-  flow: "Flow",
-  historify: "Historify",
-  strategy: "Strategy",
-  chartink: "Chartink",
-  python_strategy: "Python Strategy",
-};
+  flow: "scheduled.section_flow",
+  historify: "scheduled.section_historify",
+  strategy: "scheduled.section_strategy",
+  chartink: "scheduled.section_chartink",
+  python_strategy: "scheduled.section_python_strategy",
+} as const;
 
 // Recorder sections are dynamic (one per stock_simulator market:
 // "recorder:us", "recorder:eu", ...), not a fixed set like Mechanism A's —
 // derive a display label instead of hardcoding one per market.
-function sectionLabel(section: string): string {
-  if (SECTION_LABELS[section]) return SECTION_LABELS[section];
+function sectionLabel(t: TFunction, section: string): string {
+  if (section in SECTION_LABEL_KEYS) return t(SECTION_LABEL_KEYS[section as keyof typeof SECTION_LABEL_KEYS]);
   if (section.startsWith("recorder:")) {
-    return `Recorder (${section.slice("recorder:".length).toUpperCase()})`;
+    return t("scheduled.sectionRecorder", { market: section.slice("recorder:".length).toUpperCase() });
   }
   return section;
 }
@@ -555,22 +556,18 @@ export function Scheduled() {
         open={executorConfirm !== null}
         title={
           executorConfirm === "resume"
-            ? t("scheduled.executorResume", { defaultValue: "Resume executor" })
-            : t("scheduled.executorPause", { defaultValue: "Stop executor" })
+            ? t("scheduled.executorResume")
+            : t("scheduled.executorPause")
         }
         description={
           executorConfirm === "resume"
-            ? t("scheduled.executorResumeConfirm", {
-                defaultValue: "Resume the scheduler? Every overdue job becomes due and starts running.",
-              })
-            : t("scheduled.executorPauseConfirm", {
-                defaultValue: "Pause the scheduler? No global job is dispatched until it is resumed.",
-              })
+            ? t("scheduled.executorResumeConfirm")
+            : t("scheduled.executorPauseConfirm")
         }
         confirmLabel={
           executorConfirm === "resume"
-            ? t("scheduled.executorResume", { defaultValue: "Resume executor" })
-            : t("scheduled.executorPause", { defaultValue: "Stop executor" })
+            ? t("scheduled.executorResume")
+            : t("scheduled.executorPause")
         }
         cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
         tone={executorConfirm === "resume" ? "primary" : "destructive"}
@@ -587,10 +584,7 @@ export function Scheduled() {
 
       {executorError ? (
         <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-          {t("scheduled.executorStatusError", {
-            error: executorError,
-            defaultValue: "Could not read the scheduler executor status: {{error}}",
-          })}
+          {t("scheduled.executorStatusError", { error: executorError })}
         </p>
       ) : executor && (!executor.enabled || !executor.running) ? (
         <p
@@ -599,14 +593,8 @@ export function Scheduled() {
           className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
         >
           {executor.enabled
-            ? t("scheduled.executorPaused", {
-                defaultValue:
-                  "The scheduler executor is paused (it always starts paused after a restart). Due jobs wait and nothing runs until it is resumed.",
-              })
-            : t("scheduled.executorDisabled", {
-                defaultValue:
-                  "The scheduler is disabled on this server (VIBE_TRADING_ENABLE_SCHEDULER is off). Nothing will run.",
-              })}
+            ? t("scheduled.executorPaused")
+            : t("scheduled.executorDisabled")}
           {executor.enabled && (
             <button
               type="button"
@@ -615,7 +603,7 @@ export function Scheduled() {
               onClick={() => setExecutorConfirm("resume")}
               className="ml-2 rounded border border-warning/40 px-2 py-0.5 font-medium hover:bg-warning/10 disabled:opacity-50"
             >
-              {t("scheduled.executorResume", { defaultValue: "Resume executor" })}
+              {t("scheduled.executorResume")}
             </button>
           )}
         </p>
@@ -628,17 +616,13 @@ export function Scheduled() {
             onClick={() => setExecutorConfirm("pause")}
             className="rounded border px-2 py-0.5 hover:bg-muted/50 disabled:opacity-50"
           >
-            {t("scheduled.executorPause", { defaultValue: "Stop executor" })}
+            {t("scheduled.executorPause")}
           </button>
         </p>
       ) : null}
       {registryError && (
         <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-          {t("scheduled.registryError", {
-            error: registryError,
-            defaultValue:
-              "Recorder and OpenAlgo scheduler entries could not be loaded, so they are missing below: {{error}}",
-          })}
+          {t("scheduled.registryError", { error: registryError })}
         </p>
       )}
 
@@ -842,7 +826,7 @@ export function Scheduled() {
       </form>
 
       {!loading && totalCount > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by section">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={t("scheduled.filterBySection")}>
           <button
             type="button"
             role="tab"
@@ -855,7 +839,7 @@ export function Scheduled() {
                 : "text-muted-foreground hover:bg-muted",
             )}
           >
-            All ({totalCount})
+            {t("scheduled.allCount", { total: totalCount })}
           </button>
           {visibleSections.map((section) => (
             <button
@@ -871,7 +855,7 @@ export function Scheduled() {
                   : "text-muted-foreground hover:bg-muted",
               )}
             >
-              {sectionLabel(section)} ({sectionCounts.get(section)})
+              {sectionLabel(t, section)} ({sectionCounts.get(section)})
             </button>
           ))}
         </div>
@@ -898,7 +882,7 @@ export function Scheduled() {
           <p className="p-8 text-center text-sm text-muted-foreground">{t("scheduled.empty")}</p>
         ) : filteredRuns.length === 0 && filteredRegistryEntries.length === 0 ? (
           <p className="p-8 text-center text-sm text-muted-foreground">
-            No scheduled runs in {sectionLabel(activeSection)}.
+            {t("scheduled.noRunsInSection", { section: sectionLabel(t, activeSection) })}
           </p>
         ) : (
           <>
@@ -937,9 +921,7 @@ export function Scheduled() {
                       {run.status === "expired"
                         ? t("scheduled.noFurtherRuns", { defaultValue: "No further runs" })
                         : run.paused
-                          ? t("scheduled.pausedNoNextRun", {
-                              defaultValue: "Paused: will not run until resumed",
-                            })
+                          ? t("scheduled.pausedNoNextRun")
                           : t("scheduled.nextRun", {
                             when: formatInZone(run.next_run_at, zone, locale),
                           })}
@@ -1063,13 +1045,13 @@ export function Scheduled() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{entry.label}</span>
                       <StatusPill
-                        label={entry.enabled ? "Active" : "Off"}
+                        label={entry.enabled ? t("scheduled.entryActive") : t("scheduled.entryOff")}
                         tone={entry.enabled ? "success" : "neutral"}
                       />
                       {!entry.controls.pause &&
                         !entry.controls.resume &&
                         !entry.controls.trigger_now && (
-                          <span className={hintClass}>read-only</span>
+                          <span className={hintClass}>{t("scheduled.readOnly")}</span>
                         )}
                     </div>
                     <p className={hintClass}>{entry.schedule_display}</p>

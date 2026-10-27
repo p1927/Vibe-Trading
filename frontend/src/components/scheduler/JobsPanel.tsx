@@ -286,12 +286,12 @@ function RegistryRow({
             <StatusPill label={t("scheduled.jobsAlwaysOn")} tone="neutral" />
           ) : (
             <StatusPill
-              label={entry.enabled ? "Active" : "Off"}
+              label={entry.enabled ? t("scheduled.entryActive") : t("scheduled.entryOff")}
               tone={entry.enabled ? "success" : "neutral"}
             />
           )}
           {!entry.controls.pause && !entry.controls.resume && (
-            <span className={hintClass}>read-only</span>
+            <span className={hintClass}>{t("scheduled.readOnly")}</span>
           )}
         </div>
         <p className={hintClass}>{entry.schedule_display}</p>
