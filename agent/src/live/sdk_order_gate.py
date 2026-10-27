@@ -29,6 +29,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.live import pending_action
+from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired
 from src.live.audit import LiveActionEvent, audit_unwritable_reason, write_live_action
 from src.live.daily_count import (
     DailyCountError,
@@ -495,11 +496,13 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
             )
         place_kwargs = {**place_kwargs, "client_order_id": pending.client_order_id}
 
+    raised = False
     try:
         result = connector_module.place_order(config, **place_kwargs)
     except Exception as exc:  # noqa: BLE001 - a connector raise must not escape the gate
         logger.warning("live place_order raised for %s: %s", broker, exc)
         result = {"status": "error", "error": str(exc)}
+        raised = True  # no broker answer at all: the order may be live whatever the exception text says
 
     is_error = not isinstance(result, dict) or str(result.get("status", "")).lower() != "ok"
     accounting_failed = False
@@ -518,10 +521,13 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
         "universe_floors",
     ]
     if is_error:
+        # A kept marker plus a failure that leaves the outcome unknown (timeout, dropped connection): the order may
+        # be live, so it is `order_unresolved`, not "rejected" (same rule as the MCP guard, `gate_common`).
+        unresolved_outcome = pending is not None and (raised or is_ambiguous_failure(result))
         record = _audit(
             broker,
             session_id,
-            kind="order_rejected",
+            kind="order_unresolved" if unresolved_outcome else "order_rejected",
             outcome="error",
             mandate=mandate,
             intent=intent,
@@ -1111,24 +1117,8 @@ def _audit_action(
         return None
 
 
-def _is_expired(mandate: Mandate) -> bool:
-    raw = mandate.consent.expires_at
-    try:
-        expires = datetime.fromisoformat(raw)
-    except (TypeError, ValueError):
-        return True
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) >= expires
-
-
-def _error_message(result: object) -> str:
-    if isinstance(result, dict):
-        for key in ("error", "message", "detail"):
-            value = result.get(key)
-            if isinstance(value, str) and value:
-                return value
-    return "broker order returned an error"
+_is_expired = mandate_expired  # the one expiry rule both gates share (`gate_common`)
+_error_message = error_message
 
 
 def _describe_intent(intent: OrderIntent | None) -> str | None:

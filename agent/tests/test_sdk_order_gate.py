@@ -1044,3 +1044,19 @@ def test_positions_are_read_under_the_order_lock(monkeypatch) -> None:
     )
     assert out["status"] == "ok"
     assert seen == [True, True]
+
+
+def test_uncertain_submit_is_audited_order_unresolved_not_rejected(monkeypatch) -> None:
+    """A connector that raises after the send (no broker answer) leaves a kept marker: the audit kind says
+    `order_unresolved`, never `order_rejected` (stub connector, no live broker)."""
+    class _TimeoutConnector(_FakeConnector):
+        def place_order(self, config, **kwargs):
+            self.placed.append(kwargs)
+            raise TimeoutError("response lost")
+
+    _patch_gate(monkeypatch, mandate=_mandate())
+    kinds: list[str] = []
+    monkeypatch.setattr(gate, "write_live_action", lambda event, *a, **k: kinds.append(event.kind) or {"audited": True})
+    _place(_TimeoutConnector())
+    assert kinds == ["order_unresolved"]
+    assert load_pending_action("alpaca") is not None

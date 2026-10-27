@@ -39,7 +39,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any
 
 from src.config.accessor import get_env_config
@@ -65,6 +64,7 @@ from src.live.halt import halt_flag_set
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION, Mandate
 from src.live.mandate.store import load_mandate
 from src.live import pending_action
+from src.live.gate_common import error_message, is_ambiguous_failure, mandate_expired
 from src.live.daily_count import (
     DailyCountError,
     DailyOrderLockUnavailable,
@@ -403,7 +403,7 @@ class LiveOrderGuardTool(MCPRemoteTool):
         is_error = self._is_error_envelope(broker_response)
         # An error envelope is a definite rejection only when the broker answered; a timeout / dropped
         # connection / unparseable reply may still have placed the order.
-        unresolved_outcome = is_error and self._is_ambiguous_failure(broker_response)
+        unresolved_outcome = is_error and is_ambiguous_failure(broker_response)
 
         checked = [
             "mandate", "expiry", "halt_flag", "intent",
@@ -490,19 +490,6 @@ class LiveOrderGuardTool(MCPRemoteTool):
             "order_type": "limit" if intent.limit_price is not None else "market",
             "limit_price": intent.limit_price,
         }
-
-    # ponytail: substring heuristic over the error text; the ceiling is a transport failure worded in a way not
-    # listed here, which would be treated as a definite rejection. Upgrade: a typed `ambiguous` flag on the
-    # MCPServerAdapter error envelope.
-    _AMBIGUOUS_MARKERS = ("timeout", "timed out", "connection", "network", "reset by peer", "unreachable", "502", "503", "504")
-
-    @classmethod
-    def _is_ambiguous_failure(cls, broker_response: dict | None) -> bool:
-        """Whether an error envelope leaves it unknown if the broker placed the order."""
-        if not isinstance(broker_response, dict):
-            return True
-        text = cls._error_message(broker_response).lower()
-        return any(marker in text for marker in cls._AMBIGUOUS_MARKERS)
 
     # -- advisory review (observational, never blocks) ----------------------
 
@@ -776,19 +763,8 @@ class LiveOrderGuardTool(MCPRemoteTool):
             return None
 
     def _is_expired(self, mandate: Mandate) -> bool:
-        """Return whether the mandate is past its ``expires_at`` (fail-closed).
-
-        An unparseable ``expires_at`` is treated as expired (fail-closed): a
-        live mandate with a malformed expiry must not keep trading.
-        """
-        raw = mandate.consent.expires_at
-        try:
-            expires = datetime.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return True
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) >= expires
+        """Whether the mandate is past its ``expires_at`` (fail-closed; see `gate_common.mandate_expired`)."""
+        return mandate_expired(mandate)
 
     @staticmethod
     def _safe_json(text: str) -> dict | None:
@@ -814,12 +790,7 @@ class LiveOrderGuardTool(MCPRemoteTool):
     @staticmethod
     def _error_message(broker_response: dict | None) -> str:
         """Extract a human-readable error from an error envelope."""
-        if isinstance(broker_response, dict):
-            for key in ("error", "message", "detail"):
-                value = broker_response.get(key)
-                if isinstance(value, str) and value:
-                    return value
-        return "broker forward returned an error"
+        return error_message(broker_response, "broker forward returned an error")
 
     @staticmethod
     def _embed_live_action(forwarded: str, record: dict | None) -> str:
