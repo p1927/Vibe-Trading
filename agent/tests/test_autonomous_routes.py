@@ -33,6 +33,10 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # reaches every caller that resolves it this way.
     monkeypatch.setattr(hub_context, "get_hub_dir", lambda: tmp)
     monkeypatch.setattr(api_server, "_API_KEY", "")
+    # clear-all rewrites the Nautilus watch registry under <stack root>/log: keep it off the real checkout.
+    import trade_integrations.autonomous_agents.nautilus_watch as nautilus_watch
+
+    monkeypatch.setattr(nautilus_watch, "_trade_root", lambda: tmp)
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
 
