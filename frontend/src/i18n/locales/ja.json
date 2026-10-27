@@ -1780,5 +1780,28 @@
       "delete": "削除",
       "configured": "必要な認証情報は設定済みです"
     }
+  },
+  "modelAdapters": {
+    "title": "モデルアダプター",
+    "refresh": "更新",
+    "intro": "ニュースパイプラインが使用する LLM／埋め込みプロバイダー。各種類で優先度が最も高い有効なアダプターが最初に使われ、無効にするとフォールバックチェーンが自動的にたどられます。",
+    "generativeAdapters": "生成アダプター",
+    "embeddingAdapters": "埋め込みアダプター",
+    "noGenerative": "生成アダプターが有効になっていないため、ルールフォールバックがオンでない限りニュースの要約は停止します。",
+    "enabled": "有効",
+    "disabled": "無効",
+    "priority": "優先度",
+    "fallbackAdapter": "フォールバックアダプター",
+    "none": "(なし)",
+    "requestsPerMin": "リクエスト／分",
+    "requestsPerMinTitle": "アダプターごとではなく、共有の MiniMax アカウントのペースで決まります。",
+    "requestsPerMinShared": "リクエスト／分は共有の MiniMax アカウントのペースで、ここでは設定しません。",
+    "maxConcurrent": "最大同時実行数",
+    "save": "保存",
+    "saving": "保存中…",
+    "empty": "登録されたモデルアダプターはありません。",
+    "problemPriority": "優先度は整数で指定してください。",
+    "problemRpm": "リクエスト／分は 1 以上の整数で指定してください。",
+    "problemMaxConcurrent": "最大同時実行数は 1 以上の整数で指定してください。"
   }
 }

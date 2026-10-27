@@ -1780,5 +1780,28 @@
       "delete": "Delete",
       "configured": "Required credentials configured"
     }
+  },
+  "modelAdapters": {
+    "title": "Model Adapters",
+    "refresh": "Refresh",
+    "intro": "LLM/embedding providers used by the news pipeline. Highest-priority enabled adapter of each kind is used first; disabling one walks its fallback chain automatically.",
+    "generativeAdapters": "Generative adapters",
+    "embeddingAdapters": "Embedding adapters",
+    "noGenerative": "No generative adapter is enabled, so news distillation pauses unless the rule fallback is on.",
+    "enabled": "enabled",
+    "disabled": "disabled",
+    "priority": "Priority",
+    "fallbackAdapter": "Fallback adapter",
+    "none": "(none)",
+    "requestsPerMin": "Requests / min",
+    "requestsPerMinTitle": "Set by the shared MiniMax account pace, not per adapter.",
+    "requestsPerMinShared": "Requests / min is the shared MiniMax account pace; it is not set here.",
+    "maxConcurrent": "Max concurrent",
+    "save": "Save",
+    "saving": "Saving…",
+    "empty": "No model adapters registered.",
+    "problemPriority": "Priority must be a whole number.",
+    "problemRpm": "Requests / min must be a whole number of at least 1.",
+    "problemMaxConcurrent": "Max concurrent must be a whole number of at least 1."
   }
 }

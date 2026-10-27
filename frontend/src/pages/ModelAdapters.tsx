@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, RefreshCw, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type ModelAdapter } from "@/lib/api";
@@ -24,12 +25,14 @@ type Draft = {
 // pretending to be editable.
 const SHARED_PACE_PROVIDERS = new Set(["minimax"]);
 
-/** Why this draft cannot be saved, or null. The backend persists whatever it is sent, and one bad
+/** Locale key (modelAdapters.*) for why this draft cannot be saved, or null. The backend persists whatever it is sent, and one bad
  * value (0 rpm, a fraction for priority) would break every adapter lookup until hand-edited. */
-function draftProblem(draft: Draft, sharedPace: boolean): string | null {
-  if (!Number.isInteger(draft.priority)) return "Priority must be a whole number.";
-  if (!sharedPace && !(Number.isInteger(draft.rpm) && draft.rpm >= 1)) return "Requests / min must be a whole number of at least 1.";
-  if (!(Number.isInteger(draft.max_concurrent) && draft.max_concurrent >= 1)) return "Max concurrent must be a whole number of at least 1.";
+type DraftProblemKey = "modelAdapters.problemPriority" | "modelAdapters.problemRpm" | "modelAdapters.problemMaxConcurrent";
+
+function draftProblem(draft: Draft, sharedPace: boolean): DraftProblemKey | null {
+  if (!Number.isInteger(draft.priority)) return "modelAdapters.problemPriority";
+  if (!sharedPace && !(Number.isInteger(draft.rpm) && draft.rpm >= 1)) return "modelAdapters.problemRpm";
+  if (!(Number.isInteger(draft.max_concurrent) && draft.max_concurrent >= 1)) return "modelAdapters.problemMaxConcurrent";
   return null;
 }
 
@@ -43,6 +46,7 @@ function draftFromAdapter(adapter: ModelAdapter): Draft {
 }
 
 export function ModelAdapters() {
+  const { t } = useTranslation();
   const [adapters, setAdapters] = useState<ModelAdapter[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [loading, setLoading] = useState(true);
@@ -117,7 +121,7 @@ export function ModelAdapters() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Cpu className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-lg font-semibold">Model Adapters</h1>
+          <h1 className="text-lg font-semibold">{t("modelAdapters.title")}</h1>
         </div>
         <button
           onClick={load}
@@ -125,12 +129,11 @@ export function ModelAdapters() {
           className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Refresh
+          {t("modelAdapters.refresh")}
         </button>
       </div>
       <p className="text-sm text-muted-foreground">
-        LLM/embedding providers used by the news pipeline. Highest-priority enabled adapter of
-        each kind is used first; disabling one walks its fallback chain automatically.
+        {t("modelAdapters.intro")}
       </p>
 
       {error && (
@@ -144,10 +147,10 @@ export function ModelAdapters() {
         if (!list.length) return null;
         return (
           <div key={kind} className="space-y-3">
-            <h2 className="text-sm font-semibold capitalize text-muted-foreground">{kind} adapters</h2>
+            <h2 className="text-sm font-semibold capitalize text-muted-foreground">{t(kind === "generative" ? "modelAdapters.generativeAdapters" : "modelAdapters.embeddingAdapters")}</h2>
             {kind === "generative" && !list.some((a) => a.enabled) && (
               <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-                No generative adapter is enabled, so news distillation pauses unless the rule fallback is on.
+                {t("modelAdapters.noGenerative")}
               </p>
             )}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -173,14 +176,14 @@ export function ModelAdapters() {
                             className="rounded border-border"
                           />
                           <span className={cn(adapter.enabled ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
-                            {adapter.enabled ? "enabled" : "disabled"}
+                            {adapter.enabled ? t("modelAdapters.enabled") : t("modelAdapters.disabled")}
                           </span>
                         </label>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
                         <label className="space-y-1 text-xs">
-                          <span className="text-muted-foreground">Priority</span>
+                          <span className="text-muted-foreground">{t("modelAdapters.priority")}</span>
                           <input
                             type="number"
                             step={1}
@@ -190,13 +193,13 @@ export function ModelAdapters() {
                           />
                         </label>
                         <label className="space-y-1 text-xs">
-                          <span className="text-muted-foreground">Fallback adapter</span>
+                          <span className="text-muted-foreground">{t("modelAdapters.fallbackAdapter")}</span>
                           <select
                             value={draft.fallback_adapter_id}
                             onChange={(e) => patchDraft(adapter.adapter_id, { fallback_adapter_id: e.target.value })}
                             className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
                           >
-                            <option value="">(none)</option>
+                            <option value="">{t("modelAdapters.none")}</option>
                             {adapters
                               .filter((a) => a.kind === adapter.kind && a.adapter_id !== adapter.adapter_id)
                               .map((a) => (
@@ -207,19 +210,19 @@ export function ModelAdapters() {
                           </select>
                         </label>
                         <label className="space-y-1 text-xs">
-                          <span className="text-muted-foreground">Requests / min</span>
+                          <span className="text-muted-foreground">{t("modelAdapters.requestsPerMin")}</span>
                           <input
                             type="number"
                             min={1}
                             disabled={sharedPace}
-                            title={sharedPace ? "Set by the shared MiniMax account pace, not per adapter." : undefined}
+                            title={sharedPace ? t("modelAdapters.requestsPerMinTitle") : undefined}
                             value={draft.rpm}
                             onChange={(e) => patchDraft(adapter.adapter_id, { rpm: Number(e.target.value) })}
                             className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
                           />
                         </label>
                         <label className="space-y-1 text-xs">
-                          <span className="text-muted-foreground">Max concurrent</span>
+                          <span className="text-muted-foreground">{t("modelAdapters.maxConcurrent")}</span>
                           <input
                             type="number"
                             min={1}
@@ -232,12 +235,12 @@ export function ModelAdapters() {
 
                       {sharedPace && (
                         <p className="text-[11px] text-muted-foreground">
-                          Requests / min is the shared MiniMax account pace; it is not set here.
+                          {t("modelAdapters.requestsPerMinShared")}
                         </p>
                       )}
                       {problem && (
                         <p role="alert" className="text-[11px] text-red-700 dark:text-red-300">
-                          {problem}
+                          {t(problem)}
                         </p>
                       )}
                       <button
@@ -245,7 +248,7 @@ export function ModelAdapters() {
                         disabled={isBusy || problem !== null}
                         className="w-full rounded-lg border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
                       >
-                        {isBusy ? "Saving…" : "Save"}
+                        {isBusy ? t("modelAdapters.saving") : t("modelAdapters.save")}
                       </button>
                     </div>
                   </StatCard>
@@ -257,7 +260,7 @@ export function ModelAdapters() {
       })}
 
       {!loading && !adapters.length && (
-        <p className="text-sm text-muted-foreground">No model adapters registered.</p>
+        <p className="text-sm text-muted-foreground">{t("modelAdapters.empty")}</p>
       )}
     </div>
   );

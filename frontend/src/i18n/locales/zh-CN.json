@@ -1780,5 +1780,28 @@
       "delete": "删除",
       "configured": "所需凭证已配置"
     }
+  },
+  "modelAdapters": {
+    "title": "模型适配器",
+    "refresh": "刷新",
+    "intro": "新闻管线使用的 LLM/嵌入提供方。每种类型优先使用优先级最高的已启用适配器;停用某个适配器会自动沿其回退链切换。",
+    "generativeAdapters": "生成式适配器",
+    "embeddingAdapters": "嵌入适配器",
+    "noGenerative": "没有启用任何生成式适配器,因此除非开启规则回退,否则新闻提炼会暂停。",
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "priority": "优先级",
+    "fallbackAdapter": "回退适配器",
+    "none": "(无)",
+    "requestsPerMin": "请求数 / 分钟",
+    "requestsPerMinTitle": "由共享的 MiniMax 账户速率决定,而非按适配器设置。",
+    "requestsPerMinShared": "请求数 / 分钟是共享的 MiniMax 账户速率,不在此处设置。",
+    "maxConcurrent": "最大并发数",
+    "save": "保存",
+    "saving": "保存中…",
+    "empty": "没有已注册的模型适配器。",
+    "problemPriority": "优先级必须是整数。",
+    "problemRpm": "请求数 / 分钟必须是不小于 1 的整数。",
+    "problemMaxConcurrent": "最大并发数必须是不小于 1 的整数。"
   }
 }

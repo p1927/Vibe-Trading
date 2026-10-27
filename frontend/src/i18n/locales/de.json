@@ -1780,5 +1780,28 @@
       "delete": "Löschen",
       "configured": "Erforderliche Zugangsdaten konfiguriert"
     }
+  },
+  "modelAdapters": {
+    "title": "Modell-Adapter",
+    "refresh": "Aktualisieren",
+    "intro": "LLM-/Embedding-Anbieter der News-Pipeline. Pro Art wird zuerst der aktivierte Adapter mit der höchsten Priorität verwendet; das Deaktivieren eines Adapters folgt automatisch seiner Fallback-Kette.",
+    "generativeAdapters": "Generative Adapter",
+    "embeddingAdapters": "Embedding-Adapter",
+    "noGenerative": "Kein generativer Adapter ist aktiviert, daher pausiert die News-Destillation, sofern der Regel-Fallback nicht aktiv ist.",
+    "enabled": "aktiviert",
+    "disabled": "deaktiviert",
+    "priority": "Priorität",
+    "fallbackAdapter": "Fallback-Adapter",
+    "none": "(keiner)",
+    "requestsPerMin": "Anfragen / Min.",
+    "requestsPerMinTitle": "Wird durch das gemeinsame MiniMax-Kontotempo bestimmt, nicht pro Adapter.",
+    "requestsPerMinShared": "Anfragen / Min. ist das gemeinsame MiniMax-Kontotempo und wird hier nicht festgelegt.",
+    "maxConcurrent": "Max. parallel",
+    "save": "Speichern",
+    "saving": "Speichern …",
+    "empty": "Keine Modell-Adapter registriert.",
+    "problemPriority": "Die Priorität muss eine ganze Zahl sein.",
+    "problemRpm": "Anfragen / Min. muss eine ganze Zahl von mindestens 1 sein.",
+    "problemMaxConcurrent": "Max. parallel muss eine ganze Zahl von mindestens 1 sein."
   }
 }
