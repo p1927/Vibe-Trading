@@ -1168,6 +1168,7 @@ class AgentLoop:
         self._session_id: str = ""
         self._session_config: dict[str, Any] = {}
         self._auto_compact_count = 0
+        self._compact_floor_tokens = 0
         self._tail_token_budget = TAIL_TOKEN_BUDGET
         self._stall_reason: str | None = None
         self._last_activity_wall: float = 0.0
@@ -1282,6 +1283,7 @@ class AgentLoop:
         self._forced_tool_call_retry_used = False
         self._awaiting_forced_retry_verification = False
         self._auto_compact_count = 0
+        self._compact_floor_tokens = 0
         self._tail_token_budget = TAIL_TOKEN_BUDGET
         self._released_fallback = False
         self._released_fallback_reason = None
@@ -3194,8 +3196,16 @@ class AgentLoop:
             manual: True when the model explicitly requested compact (Layer 4).
         """
         del run_dir
-        if not manual and self._auto_compact_count >= 1:
-            logger.info("Skipping auto compact: already compacted once this attempt")
+        # One compact per burst (ff7db82e7: bootstrap reads were summarised away in a
+        # loop), but a long turn must not grow unbounded after the first one: a further
+        # auto compact needs a full threshold of fresh growth past the last compact.
+        # ponytail: the estimate omits tool schemas; a full-prompt estimate is the upgrade.
+        if (
+            not manual
+            and self._auto_compact_count >= 1
+            and estimate_tokens(messages) <= self._compact_floor_tokens + _token_threshold()
+        ):
+            logger.info("Skipping auto compact: less than a threshold of growth since the last one")
             return
 
         # Save full transcript before compressing next to the active trace.
@@ -3357,6 +3367,7 @@ class AgentLoop:
         if estimate_tokens(messages) > threshold:
             _shrink_tail_to_threshold(messages, threshold)
 
+        self._compact_floor_tokens = estimate_tokens(messages)
         if not manual:
             self._auto_compact_count += 1
 
