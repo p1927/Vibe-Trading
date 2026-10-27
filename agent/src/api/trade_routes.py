@@ -3237,442 +3237,116 @@ def get_news_scenario(
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
-@trade_router.get(
-    "/index-prediction/external-predictions",
-    response_model=ExternalPredictionsResponse,
-)
-def get_external_predictions(
-    ticker: str = "NIFTY",
-    horizon_days: int = 14,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionsResponse:
-    """Return cached third-party NIFTY forecasts (no live fetch)."""
-    key = _ticker_key(ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.store import (
-            load_snapshot,
-        )
-
-        ensure_trade_stack_path()
-        snapshot = load_snapshot(symbol=key, horizon_days=horizon_days)
-        snapshot_payload = snapshot.to_dict()
-        snapshot_payload["source_health"] = _external_prediction_source_health(snapshot)
-        return ExternalPredictionsResponse(
-            status=_external_predictions_status(snapshot),
-            ticker=key,
-            snapshot=snapshot_payload,
-        )
-    except Exception as exc:
-        logger.exception("get external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+_INDEX_PREDICTION_RUN_POLL_SECONDS = 0.5
+_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS = 15.0
 
 
-@trade_router.post(
-    "/index-prediction/external-predictions/refresh",
-    response_model=ExternalPredictionsResponse,
-)
-def refresh_external_predictions(
-    body: ExternalPredictionsRefreshRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionsResponse:
-    """Fetch latest third-party forecasts from watchlisted sources."""
-    key = _ticker_key(body.ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.refresh import (
-            refresh_all_external_predictions,
-        )
-
-        ensure_trade_stack_path()
-        snapshot = refresh_all_external_predictions(
-            symbol=key,
-            horizon_days=body.horizon_days,
-        )
-        snapshot_payload = snapshot.to_dict()
-        snapshot_payload["source_health"] = _external_prediction_source_health(snapshot)
-        return ExternalPredictionsResponse(
-            status=_external_predictions_status(snapshot),
-            ticker=key,
-            snapshot=snapshot_payload,
-        )
-    except Exception as exc:
-        logger.exception("refresh external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+def _index_prediction_run_sse_frame(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
-def _kick_external_predictions_refresh(body: ExternalPredictionsRefreshRequest) -> tuple[str, str, bool]:
-    from src.trade.external_predictions_run_jobs import kick_external_predictions_refresh
-
-    return kick_external_predictions_refresh(
-        ticker=_ticker_key(body.ticker),
-        horizon_days=body.horizon_days,
-    )
-
-
-def _external_predictions_log_to_events(entry: dict[str, Any]) -> "list[tuple[str, dict[str, Any]]]":
-    if str(entry.get("stage") or "") == "source_complete":
-        return [
-            (
-                "source_complete",
-                {
-                    "source_id": entry.get("source_id"),
-                    "record": entry.get("record"),
-                    "partial_snapshot": entry.get("partial_snapshot"),
-                },
-            )
-        ]
-    return [("log", {"entry": entry})]
-
-
-def _external_predictions_terminal(job: dict[str, Any]) -> "tuple[str, dict[str, Any]] | None":
-    status = str(job.get("status") or "")
-    if status == "done":
-        snapshot = job.get("snapshot")
-        ticker = str(job.get("ticker") or "")
-        if snapshot is not None:
-            return ("done", {"ticker": ticker, "snapshot": snapshot})
-        return ("error", {"message": "job completed without snapshot"})
-    if status == "error":
-        return ("error", {"message": job.get("error") or "unknown error"})
-    return None
-
-
-def _external_predictions_heartbeat(job_id: str, status: str) -> str:
-    return _index_prediction_run_sse_frame("heartbeat", {"job_id": job_id, "status": status})
-
-
-async def _external_predictions_refresh_event_stream(job_id: str, request: Request):
-    """Replay stored logs then poll job store until done/error."""
-    from src.trade.external_predictions_run_jobs import _get_job_record, reconcile_zombie_job
-
-    async for chunk in _sse_event_stream(
-        job_id=job_id,
-        request=request,
-        reconcile=reconcile_zombie_job,
-        get_record=_get_job_record,
-        frame=_index_prediction_run_sse_frame,
-        log_to_events=_external_predictions_log_to_events,
-        terminal=_external_predictions_terminal,
-        heartbeat=_external_predictions_heartbeat,
-        heartbeat_seconds=_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS,
-        poll_seconds=_INDEX_PREDICTION_RUN_POLL_SECONDS,
-    ):
-        yield chunk
-
-
-def _external_predictions_refresh_stream_response(job_id: str, request: Request) -> StreamingResponse:
-    return StreamingResponse(
-        _external_predictions_refresh_event_stream(job_id, request),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@trade_router.post(
-    "/index-prediction/external-predictions/refresh/start",
-    response_model=ExternalPredictionsRefreshStartResponse,
-    status_code=202,
-)
-def start_external_predictions_refresh(
-    body: ExternalPredictionsRefreshRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionsRefreshStartResponse:
-    """Queue external-predictions refresh and return a trackable job_id."""
-    from src.trade.hub_bridge import ensure_trade_stack_path
-
-    ensure_trade_stack_path()
-    job_id, job_status, reused = _kick_external_predictions_refresh(body)
-    return ExternalPredictionsRefreshStartResponse(
-        job_id=job_id,
-        job_status=job_status,
-        reused=reused,
-    )
-
-
-@trade_router.get(
-    "/index-prediction/external-predictions/refresh/active",
-    response_model=ExternalPredictionsRefreshActiveResponse,
-)
-def get_active_external_predictions_refresh(
-    ticker: str = "NIFTY",
-    horizon_days: int = 14,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionsRefreshActiveResponse:
-    from src.trade.external_predictions_run_jobs import get_active_job
-
-    snap = get_active_job(ticker, horizon_days=horizon_days)
-    if snap is None:
-        return ExternalPredictionsRefreshActiveResponse(status="ok", job=None)
-    return ExternalPredictionsRefreshActiveResponse(status="ok", job=snap)
-
-
-@trade_router.get(
-    "/index-prediction/external-predictions/refresh/{job_id}",
-    response_model=ExternalPredictionsRefreshJobResponse,
-)
-def get_external_predictions_refresh_job(
+async def _reconcile_and_read_job(
+    reconcile: Callable[[str], Any],
+    get_record: Callable[[str], dict[str, Any] | None],
     job_id: str,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionsRefreshJobResponse:
-    from src.trade.external_predictions_run_jobs import get_job, job_id_valid
+) -> dict[str, Any] | None:
+    """One SSE poll tick of a file-backed job store, run off the event loop thread.
 
-    if not job_id_valid(job_id):
-        raise HTTPException(status_code=400, detail="invalid job_id")
-    snap = get_job(job_id)
-    if snap is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return ExternalPredictionsRefreshJobResponse(status="ok", job=snap)
+    ``reconcile`` probes the worker PID and may rewrite the job file; ``get_record`` reads
+    the job file from disk and takes the store's ``_JOBS_LOCK``. Called from an async
+    generator every poll tick per connected client, so on the loop thread either one would
+    freeze every request on the process while it ran, ``/health`` included. Same fix as the
+    Command Center legs (fork 19f04199).
+    """
+
+    def _poll() -> dict[str, Any] | None:
+        reconcile(job_id)
+        return get_record(job_id)
+
+    return await asyncio.to_thread(_poll)
 
 
-@trade_router.get("/index-prediction/external-predictions/refresh/{job_id}/stream")
-async def stream_external_predictions_refresh_job(
+async def _sse_event_stream(
+    *,
     job_id: str,
     request: Request,
-    _auth: None = Depends(require_local_or_auth),
-) -> StreamingResponse:
-    """SSE: replay pipeline logs and stream until the refresh terminates."""
-    from src.trade.external_predictions_run_jobs import _get_job_record, job_id_valid
-
-    if not job_id_valid(job_id):
-        raise HTTPException(status_code=400, detail="invalid job_id")
-    if await asyncio.to_thread(_get_job_record, job_id) is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return _external_predictions_refresh_stream_response(job_id, request)
-
-
-@trade_router.get(
-    "/index-prediction/external-predictions/sources",
-    response_model=ExternalPredictionSourcesResponse,
-)
-def list_external_prediction_sources(
-    ticker: str = "NIFTY",
-    watchlisted_only: bool = False,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionSourcesResponse:
-    key = _ticker_key(ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
-            load_registry,
-        )
-
-        ensure_trade_stack_path()
-        registry = load_registry()
-        if watchlisted_only:
-            registry = [s for s in registry if s.watchlisted]
-        return ExternalPredictionSourcesResponse(
-            status="ok",
-            ticker=key,
-            sources=[s.to_dict() for s in registry],
-        )
-    except Exception as exc:
-        logger.exception("list external prediction sources failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.post(
-    "/index-prediction/external-predictions/sources",
-    response_model=ExternalPredictionSourcesResponse,
-)
-def add_external_prediction_source(
-    body: ExternalPredictionSourceRequest,
-    ticker: str = "NIFTY",
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionSourcesResponse:
-    key = _ticker_key(ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
-            add_source_to_watchlist,
-            load_registry,
-        )
-
-        ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.external_predictions.source_validation import (
-            validate_user_source_request,
-        )
-
-        domains, entry_urls, validation_error = validate_user_source_request(
-            display_name=body.display_name,
-            domains=body.domains,
-            entry_urls=body.entry_urls,
-            require_entry_urls=not bool(body.id and str(body.id).strip()),
-        )
-        if validation_error:
-            raise HTTPException(status_code=400, detail=validation_error)
-        add_source_to_watchlist(
-            source_id=body.id,
-            display_name=body.display_name,
-            domains=domains,
-            entry_urls=entry_urls,
-            search_queries=body.search_queries,
-            kind=body.kind,
-            added_by="user",
-        )
-        registry = load_registry()
-        return ExternalPredictionSourcesResponse(
-            status="ok",
-            ticker=key,
-            sources=[s.to_dict() for s in registry],
-            message=f"Added {body.display_name} to watchlist",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("add external prediction source failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.delete(
-    "/index-prediction/external-predictions/sources/{source_id}",
-    response_model=ExternalPredictionSourcesResponse,
-)
-def remove_external_prediction_source(
-    source_id: str,
-    ticker: str = "NIFTY",
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionSourcesResponse:
-    key = _ticker_key(ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
-            load_registry,
-            remove_source_from_watchlist,
-        )
-
-        ensure_trade_stack_path()
-        removed = remove_source_from_watchlist(source_id)
-        registry = load_registry()
-        if not removed:
-            return ExternalPredictionSourcesResponse(
-                status="forbidden",
-                ticker=key,
-                sources=[s.to_dict() for s in registry],
-                message=f"Cannot remove source {source_id}",
-            )
-        return ExternalPredictionSourcesResponse(
-            status="ok",
-            ticker=key,
-            sources=[s.to_dict() for s in registry],
-            message=f"Removed {source_id} from watchlist",
-        )
-    except Exception as exc:
-        logger.exception("remove external prediction source failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.get(
-    "/index-prediction/external-predictions/discover",
-    response_model=ExternalPredictionSourcesResponse,
-)
-def discover_external_prediction_sources(
-    ticker: str = "NIFTY",
-    limit: int = 12,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionSourcesResponse:
-    key = _ticker_key(ticker)
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.discover import (
-            discover_external_sources,
-        )
-        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
-            load_registry,
-        )
-
-        ensure_trade_stack_path()
-        candidates = discover_external_sources(limit=limit, persist=True)
-        registry = load_registry()
-        return ExternalPredictionSourcesResponse(
-            status="ok",
-            ticker=key,
-            sources=[s.to_dict() for s in registry if not s.watchlisted],
-            candidates=candidates,
-        )
-    except Exception as exc:
-        logger.exception("discover external prediction sources failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.post(
-    "/index-prediction/external-predictions/sources/{source_id}/approve-path",
-    response_model=ExternalPredictionSourcesResponse,
-)
-def approve_external_prediction_path(
-    source_id: str,
-    ticker: str = "NIFTY",
-    horizon_days: int = 14,
-    _auth: None = Depends(require_local_or_auth),
-) -> ExternalPredictionSourcesResponse:
-    """Promote auto-saved navigation path to user-approved for fast-path replay."""
-    key = _ticker_key(ticker)
-    sid = (source_id or "").strip().lower()
-    if not sid:
-        raise HTTPException(status_code=400, detail="source_id required")
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.path_store import (
-            approve_path,
-        )
-        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
-            load_registry,
-        )
-
-        ensure_trade_stack_path()
-        promoted = approve_path(sid, horizon_days=horizon_days)
-        registry = load_registry()
-        if promoted is None:
-            return ExternalPredictionSourcesResponse(
-                status="not_found",
-                ticker=key,
-                sources=[s.to_dict() for s in registry],
-                message=f"No saved path to approve for {sid} ({horizon_days}d)",
-            )
-        return ExternalPredictionSourcesResponse(
-            status="ok",
-            ticker=key,
-            sources=[s.to_dict() for s in registry],
-            message=f"Approved navigation path for {sid} ({horizon_days}d)",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("approve external prediction path failed for %s", sid)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.get("/index-prediction/external-predictions/sources/{source_id}/thumbnail")
-def get_external_prediction_thumbnail(
-    source_id: str,
-    ticker: str = "NIFTY",
-    run_id: str | None = None,
-    _auth: None = Depends(require_local_or_auth),
+    reconcile: Callable[[str], Any],
+    get_record: Callable[[str], dict[str, Any] | None],
+    frame: Callable[[str, dict[str, Any]], str],
+    log_to_events: Callable[[dict[str, Any]], "list[tuple[str, dict[str, Any]]]"],
+    terminal: Callable[[dict[str, Any]], "tuple[str, dict[str, Any]] | None"],
+    heartbeat: Callable[[str, str], str],
+    heartbeat_seconds: float,
+    poll_seconds: float,
 ):
-    key = _ticker_key(ticker)
-    sid = (source_id or "").strip().lower()
-    if not sid:
-        raise HTTPException(status_code=400, detail="source_id required")
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.index_research.external_predictions.screenshot_utils import (
-            resolve_thumbnail_path,
-        )
+    """Generic poll-loop skeleton shared by the three job-store SSE endpoints
+    (index-prediction run, external-predictions refresh, recording): replay
+    buffered logs off the last-seen index, then poll the job store until
+    ``terminal(job)`` reports a frame to emit and end the stream.
 
-        ensure_trade_stack_path()
-        path = resolve_thumbnail_path(symbol=key, source_id=sid, run_id=run_id)
-        if path is None or not path.is_file():
-            raise HTTPException(status_code=404, detail="thumbnail not found")
-        return FileResponse(path, media_type="image/jpeg")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("external prediction thumbnail failed for %s", sid)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+    Genuinely different per caller behavior stays caller-owned via hooks
+    rather than being forced into one shape here: ``log_to_events`` (external
+    predictions turns a ``source_complete`` log entry into a differently-
+    shaped event instead of a raw ``log`` frame), ``terminal`` (each system's
+    own done/error payload field name and status set), and ``heartbeat``
+    (index-prediction/recording emit a bare SSE comment, external-predictions
+    emits a real named ``heartbeat`` event with a JSON body).
+    """
+    import time as time_mod
+
+    last_log_idx = 0
+    last_emit = time_mod.monotonic()
+    while True:
+        if await request.is_disconnected():
+            return
+
+        job = await _reconcile_and_read_job(reconcile, get_record, job_id)
+        if job is None:
+            yield frame("error", {"message": "job not found"})
+            return
+
+        logs = list(job.get("logs") or [])
+        while last_log_idx < len(logs):
+            for event, data in log_to_events(logs[last_log_idx]):
+                yield frame(event, data)
+            last_log_idx += 1
+            last_emit = time_mod.monotonic()
+
+        done = terminal(job)
+        if done is not None:
+            event, data = done
+            yield frame(event, data)
+            return
+
+        if time_mod.monotonic() - last_emit >= heartbeat_seconds:
+            yield heartbeat(job_id, str(job.get("status") or ""))
+            last_emit = time_mod.monotonic()
+
+        await asyncio.sleep(poll_seconds)
+
+# Routes below live in src/api/trade_external_predictions_routes.py. The import sits here so they register on trade_router
+# in their original order; the names are re-exported because callers and tests patch/import them from trade_routes.
+from .trade_external_predictions_routes import (  # noqa: E402,F401
+    _external_predictions_heartbeat,
+    _external_predictions_log_to_events,
+    _external_predictions_refresh_event_stream,
+    _external_predictions_refresh_stream_response,
+    _external_predictions_terminal,
+    _kick_external_predictions_refresh,
+    add_external_prediction_source,
+    approve_external_prediction_path,
+    discover_external_prediction_sources,
+    get_active_external_predictions_refresh,
+    get_external_prediction_thumbnail,
+    get_external_predictions,
+    get_external_predictions_refresh_job,
+    list_external_prediction_sources,
+    refresh_external_predictions,
+    remove_external_prediction_source,
+    start_external_predictions_refresh,
+    stream_external_predictions_refresh_job,
+)
 
 
 @trade_router.get("/index-prediction/verified-news", response_model=IndexVerifiedNewsResponse)
@@ -3761,94 +3435,6 @@ def get_index_day_attribution(
         logger.exception("day-attribution failed for %s", date)
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
-
-_INDEX_PREDICTION_RUN_POLL_SECONDS = 0.5
-_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS = 15.0
-
-
-def _index_prediction_run_sse_frame(event: str, data: dict[str, Any]) -> str:
-    payload = json.dumps(data, ensure_ascii=False, default=str)
-    return f"event: {event}\ndata: {payload}\n\n"
-
-
-async def _reconcile_and_read_job(
-    reconcile: Callable[[str], Any],
-    get_record: Callable[[str], dict[str, Any] | None],
-    job_id: str,
-) -> dict[str, Any] | None:
-    """One SSE poll tick of a file-backed job store, run off the event loop thread.
-
-    ``reconcile`` probes the worker PID and may rewrite the job file; ``get_record`` reads
-    the job file from disk and takes the store's ``_JOBS_LOCK``. Called from an async
-    generator every poll tick per connected client, so on the loop thread either one would
-    freeze every request on the process while it ran, ``/health`` included. Same fix as the
-    Command Center legs (fork 19f04199).
-    """
-
-    def _poll() -> dict[str, Any] | None:
-        reconcile(job_id)
-        return get_record(job_id)
-
-    return await asyncio.to_thread(_poll)
-
-
-async def _sse_event_stream(
-    *,
-    job_id: str,
-    request: Request,
-    reconcile: Callable[[str], Any],
-    get_record: Callable[[str], dict[str, Any] | None],
-    frame: Callable[[str, dict[str, Any]], str],
-    log_to_events: Callable[[dict[str, Any]], "list[tuple[str, dict[str, Any]]]"],
-    terminal: Callable[[dict[str, Any]], "tuple[str, dict[str, Any]] | None"],
-    heartbeat: Callable[[str, str], str],
-    heartbeat_seconds: float,
-    poll_seconds: float,
-):
-    """Generic poll-loop skeleton shared by the three job-store SSE endpoints
-    (index-prediction run, external-predictions refresh, recording): replay
-    buffered logs off the last-seen index, then poll the job store until
-    ``terminal(job)`` reports a frame to emit and end the stream.
-
-    Genuinely different per caller behavior stays caller-owned via hooks
-    rather than being forced into one shape here: ``log_to_events`` (external
-    predictions turns a ``source_complete`` log entry into a differently-
-    shaped event instead of a raw ``log`` frame), ``terminal`` (each system's
-    own done/error payload field name and status set), and ``heartbeat``
-    (index-prediction/recording emit a bare SSE comment, external-predictions
-    emits a real named ``heartbeat`` event with a JSON body).
-    """
-    import time as time_mod
-
-    last_log_idx = 0
-    last_emit = time_mod.monotonic()
-    while True:
-        if await request.is_disconnected():
-            return
-
-        job = await _reconcile_and_read_job(reconcile, get_record, job_id)
-        if job is None:
-            yield frame("error", {"message": "job not found"})
-            return
-
-        logs = list(job.get("logs") or [])
-        while last_log_idx < len(logs):
-            for event, data in log_to_events(logs[last_log_idx]):
-                yield frame(event, data)
-            last_log_idx += 1
-            last_emit = time_mod.monotonic()
-
-        done = terminal(job)
-        if done is not None:
-            event, data = done
-            yield frame(event, data)
-            return
-
-        if time_mod.monotonic() - last_emit >= heartbeat_seconds:
-            yield heartbeat(job_id, str(job.get("status") or ""))
-            last_emit = time_mod.monotonic()
-
-        await asyncio.sleep(poll_seconds)
 
 
 def _index_prediction_run_log_to_events(entry: dict[str, Any]) -> "list[tuple[str, dict[str, Any]]]":
