@@ -251,6 +251,8 @@ export interface SelectorResponseData {
   expiry_days: number;
   horizon_days: number;
   underlying_ltp: number;
+  /** When the chain behind this response was read (ISO, UTC). */
+  as_of?: string | null;
   target_profit: number;
   rank_by: SelectorRankBy;
   distribution_type: string;
@@ -320,6 +322,8 @@ export interface PopOverlayResponse {
   expiry_days: number;
   horizon_days: number;
   underlying_ltp: number;
+  /** When the chain behind this response was read (ISO, UTC). */
+  as_of?: string | null;
   distribution_type: string;
   apply_liquidity_discount: boolean;
   iv_decay_half_life_days: number | null;

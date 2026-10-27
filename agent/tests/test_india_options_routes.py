@@ -167,6 +167,7 @@ def _chain_envelope(*, expiration: int | None, underlying_ltp: float | None = 24
             "expirations": [expiration] if expiration else [],
             "underlying_ltp": underlying_ltp,
             "lot_size": 75,
+            "as_of": "2026-10-27T09:30:00+00:00",
             "calls_count": 1,
             "puts_count": 1,
             "calls": [{"strike": 24000.0, "last_price": 150.0, "implied_volatility": 0.15}],
@@ -300,6 +301,7 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert body["apply_liquidity_discount"] is False
     assert body["horizon_days"] == 7
     assert body["underlying_ltp"] == 24000.0
+    assert body["as_of"] == "2026-10-27T09:30:00+00:00"  # passed through from the chain envelope
     assert len(body["overlay"]) == 2
     assert body["forecast_quantiles"] == {"p10": -2.0, "p50": 0.0, "p90": 2.0}
     assert body["event_risks"] == [{"symbol": "RELIANCE", "event_type": "earnings", "days_from_now": 3}]
@@ -665,7 +667,7 @@ def _fake_stage_result(*, expiry_date: str | None, underlying_ltp: float | None 
         stage="chain",
         status="ok",
         vendor="stock_simulator",
-        fetched_at=_dt.now(_tz.utc),
+        fetched_at=_dt(2026, 10, 27, 9, 30, tzinfo=_tz.utc),
         data={
             "underlying": "NIFTY",
             "underlying_ltp": underlying_ltp,
@@ -827,6 +829,7 @@ def test_selector_success_returns_ranked_candidates(
     assert body["ticker"] == "NIFTY"
     assert body["target_profit"] == 500
     assert body["rank_by"] == "pop_per_risk"
+    assert body["as_of"] == "2026-10-27T09:30:00+00:00"  # the chain's own read time, not "now"
     assert body["distribution_type"] == "physical"
     assert len(body["candidates"]) == 1
     assert body["candidates"][0]["name"] == "long_call"
@@ -982,3 +985,11 @@ def test_prepare_widget_rejects_missing_legs(client: TestClient) -> None:
         json={"ticker": "NIFTY", "candidate": {"name": "empty", "legs": []}},
     )
     assert response.status_code == 400
+
+
+def test_chain_tool_envelope_carries_a_read_time() -> None:
+    from src.tools.india_options_chain_tool import _success
+
+    chain = {"underlying_ltp": 24000.0, "expiry_date": "2099-01-29", "chain": [], "strikes": []}
+    data = json.loads(_success("NIFTY", "stock_simulator", chain, underlying="NIFTY"))["data"]
+    assert datetime.fromisoformat(data["as_of"]).tzinfo is not None

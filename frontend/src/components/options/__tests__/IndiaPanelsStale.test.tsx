@@ -44,6 +44,15 @@ describe("IndiaSelectorPanel", () => {
     second.resolve(selectorData("NIFTY", "Bull Put NIFTY") as never);
     await screen.findByText("Bull Put NIFTY");
   });
+
+  it("shows when the chain behind the ranking was read, in IST", async () => {
+    vi.spyOn(api, "getIndiaOptionsSelector").mockResolvedValue(
+      { ...selectorData("NIFTY", "Iron Condor NIFTY"), as_of: "2026-10-15T04:00:00Z" } as never,
+    );
+    render(<IndiaSelectorPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(await screen.findByTestId("india-selector-as-of")).toHaveTextContent("15 Oct 2026, 09:30 IST");
+  });
 });
 
 describe("IndiaPopOverlayPanel", () => {

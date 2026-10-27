@@ -381,6 +381,8 @@ def _success(
         "puts_count": len(puts),
         "calls": calls,
         "puts": puts,
+        # Point-in-time: when this chain was read, so a consumer can show its age (vendor chains carry no clock).
+        "as_of": datetime.now(timezone.utc).isoformat(),
     }
     return json.dumps(
         {"ok": True, "market": "india_equity", "source": source, "data": data},

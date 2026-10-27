@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
 import type { SelectorCandidate, SelectorRankBy, SelectorResponseData } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
+import { formatIst } from "@/lib/istTime";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { formatNumber, formatFractionPercent } from "@/lib/formatters";
@@ -322,6 +323,12 @@ export function IndiaSelectorPanel({ underlying }: Props) {
                 {formatCurrency("india_equity", data.underlying_ltp)}
               </span>
             </span>
+            {data.as_of ? (
+              <span data-testid="india-selector-as-of">
+                {t("options.india.asOf", { defaultValue: "As of" })}{" "}
+                <span className="font-medium text-foreground">{formatIst(data.as_of)}</span>
+              </span>
+            ) : null}
             <span>
               {t("options.chain.expiration")}{" "}
               <span className="font-medium text-foreground">{data.expiry_date || "–"}</span>
