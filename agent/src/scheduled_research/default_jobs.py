@@ -2,20 +2,19 @@
 
 Each ``register_default_*`` function creates a job only when its id is missing, so a record stored
 before a default changed keeps its old value forever. ``register_all_default_jobs`` registers the
-families, then carries the code's timezone onto stored defaults that have none: a default cron is
-authored in IST (``DEFAULT_JOB_TIMEZONE``), and ``timezone=None`` means UTC, which put "evening
+families, then reconciles every stored default against what the code registers today
+(``store.reconcile_default_job``: schedule, timezone, prompt and config; runtime state untouched). A default
+cron is authored in IST (``DEFAULT_JOB_TIMEZONE``), and ``timezone=None`` means UTC, which put "evening
 maintenance" (18:35) at 00:05 IST. Used by API startup and by the test that every default has a timezone.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import tempfile
-import time
 from pathlib import Path
 
-from src.scheduled_research.store import ScheduledResearchJobStore
+from src.scheduled_research.store import ScheduledResearchJobStore, reconcile_default_job
 
 logger = logging.getLogger(__name__)
 
@@ -49,20 +48,10 @@ def _register_families(store: ScheduledResearchJobStore) -> None:
 
 
 def register_all_default_jobs(store: ScheduledResearchJobStore) -> None:
-    from src.scheduled_research.executor import next_due
-
     _register_families(store)
-    with tempfile.TemporaryDirectory() as tmp:  # what the code registers today, to read the intended timezones from
+    with tempfile.TemporaryDirectory() as tmp:  # what the code registers today: the definitions to carry onto the store
         fresh = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
         _register_families(fresh)
-        intended = {job.id: job.timezone for job in fresh.load().values()}
-    now_ms = int(time.time() * 1000)
-    for job in store.load().values():
-        tz = intended.get(job.id)
-        if tz is None or job.timezone is not None:
-            continue
-        # A not-yet-due run was timed in UTC: retime it on the wall clock it was authored in. An overdue one
-        # still fires at once and then advances in its timezone.
-        next_run_at = next_due(job.schedule, now_ms, tz) if job.next_run_at > now_ms else job.next_run_at
-        store.upsert(dataclasses.replace(job, timezone=tz, next_run_at=next_run_at))
-        logger.info("default job %s: timezone None -> %s, next run %s", job.id, tz, next_run_at)
+        code_jobs = list(fresh.load().values())
+    for code_job in code_jobs:
+        reconcile_default_job(store, code_job)

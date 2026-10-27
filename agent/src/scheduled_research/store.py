@@ -341,3 +341,50 @@ class ScheduledResearchJobStore:
         if not all(isinstance(item, dict) for item in jobs):
             raise ValueError("store 'jobs' contains a non-object entry")
         return jobs
+
+
+def reconcile_default_job(store: ScheduledResearchJobStore, code_job: ScheduledResearchJob) -> bool:
+    """Carry a code-defined default job's definition onto the copy already in ``store``. True when it changed.
+
+    The one reconcile every default-job family goes through (``default_jobs.register_all_default_jobs`` for
+    all of them; ``register_default_index_jobs`` for a direct caller): ``register_default_*`` only creates a
+    missing job, so without this a cron, timezone, prompt or config edit in code never reaches a store that
+    already holds the job. Only the fields code defines are carried (schedule, timezone, prompt; ``config`` is
+    merged, so executor scratch keys such as ``_timed_out`` survive); runtime state (status, last_run_at,
+    consecutive_failures, paused, delivery) is untouched. A not-yet-due run is retimed on the new schedule or
+    wall clock; an overdue one still fires at once and then advances on it.
+    """
+    existing = store.get(code_job.id)
+    if existing is None:
+        return False
+    merged_config = {**existing.config, **code_job.config}
+    if (
+        existing.schedule == code_job.schedule
+        and existing.timezone == code_job.timezone
+        and existing.prompt == code_job.prompt
+        and existing.config == merged_config
+    ):
+        return False
+    next_run_at = existing.next_run_at
+    if existing.schedule != code_job.schedule or existing.timezone != code_job.timezone:
+        import time
+
+        from src.scheduled_research.executor import next_due
+
+        now_ms = int(time.time() * 1000)
+        if existing.next_run_at > now_ms:
+            next_run_at = next_due(code_job.schedule, now_ms, code_job.timezone)
+    from dataclasses import replace
+
+    store.upsert(
+        replace(
+            existing,
+            schedule=code_job.schedule,
+            timezone=code_job.timezone,
+            prompt=code_job.prompt,
+            config=merged_config,
+            next_run_at=next_run_at,
+        )
+    )
+    logger.info("reconciled default job %s (schedule=%s, timezone=%s)", code_job.id, code_job.schedule, code_job.timezone)
+    return True
