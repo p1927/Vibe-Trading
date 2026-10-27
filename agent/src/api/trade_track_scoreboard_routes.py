@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException
-from src.api.helpers import redacted_error_detail
+from fastapi import Depends
+from src.api.helpers import bad_gateway_on_error
 from src.api.security import require_local_or_auth
 from src.trade import scoreboard_refresh
 from typing import Any, Dict
@@ -22,7 +22,7 @@ def get_index_track_scoreboard(
     A GET never recomputes (the walk-forward takes minutes; an inline recompute never returned in 170 s,
     D198): refresh is `POST /index-prediction/track-scoreboard/refresh`."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction track-scoreboard failed for %s", key):
         from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
             load_scoreboard,
             normalize_scoreboard_report,
@@ -41,9 +41,6 @@ def get_index_track_scoreboard(
         report = enrich_scoreboard_with_live(report, ticker=key)
         report["refresh_job"] = scoreboard_refresh.current_job()
         return IndexTrackScoreboardResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction track-scoreboard failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/index-prediction/track-scoreboard/refresh")

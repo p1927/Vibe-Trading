@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException
-from src.api.helpers import redacted_error_detail
+from src.api.helpers import bad_gateway_on_error, redacted_error_detail
 from src.api.security import require_local_or_auth
 from typing import List, Optional
 from .trade_routes import HistoricalUpcomingEvent, HistoricalUpcomingEventsResponse, IndexPredictionJobsResponse, IndexPredictionSnapshotsResponse, IndexUpcomingEventOutcome, _ticker_key, logger, trade_router
@@ -14,15 +14,12 @@ def get_index_prediction_jobs(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionJobsResponse:
     """List scheduled cron jobs that feed the prediction pipeline."""
-    try:
+    with bad_gateway_on_error(logger, "index-prediction jobs list failed"):
         from src.trade.index_prediction_jobs import list_index_prediction_jobs
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         payload = list_index_prediction_jobs()
-    except Exception as exc:
-        logger.exception("index-prediction jobs list failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     return IndexPredictionJobsResponse(
         status=payload.get("status", "ok"),
         env=payload.get("env") or {},
@@ -41,15 +38,12 @@ def pause_index_prediction_job(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionJobsResponse:
     """Pause one index prediction cron job's recurring schedule."""
-    try:
+    with bad_gateway_on_error(logger, "pause index job %s failed", job_id):
         from src.trade.index_prediction_jobs import pause_index_prediction_job
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         payload = pause_index_prediction_job(job_id)
-    except Exception as exc:
-        logger.exception("pause index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -61,15 +55,12 @@ def resume_index_prediction_job_route(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionJobsResponse:
     """Resume a paused index prediction cron job."""
-    try:
+    with bad_gateway_on_error(logger, "resume index job %s failed", job_id):
         from src.trade.index_prediction_jobs import resume_index_prediction_job
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         payload = resume_index_prediction_job(job_id)
-    except Exception as exc:
-        logger.exception("resume index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -89,15 +80,12 @@ def trigger_index_prediction_job_route(
     The returned ``job.due_jobs_ahead`` says how many other jobs were due
     at trigger time.
     """
-    try:
+    with bad_gateway_on_error(logger, "trigger index job %s failed", job_id):
         from src.trade.index_prediction_jobs import trigger_index_prediction_job
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         payload = trigger_index_prediction_job(job_id)
-    except Exception as exc:
-        logger.exception("trigger index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -113,15 +101,12 @@ def cancel_index_prediction_job_route(
     Distinct from pause: only aborts the in-flight run, leaves the
     recurring schedule untouched.
     """
-    try:
+    with bad_gateway_on_error(logger, "cancel index job %s failed", job_id):
         from src.trade.index_prediction_jobs import cancel_index_prediction_job
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         payload = cancel_index_prediction_job(job_id)
-    except Exception as exc:
-        logger.exception("cancel index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -167,7 +152,7 @@ def get_index_prediction_upcoming_events_history(
     for dates that have already matured. See
     .claude/backlog/items/2026-09-06-scheduled-calendar-event-outcome-tracking-gap.md."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction upcoming-events history failed for %s", key):
         from datetime import date as _date
 
         from trade_integrations.dataflows.index_research.event_outcomes import compute_event_market_outcome
@@ -188,6 +173,3 @@ def get_index_prediction_upcoming_events_history(
             events.append(HistoricalUpcomingEvent(**filtered, market_outcome=outcome))
 
         return HistoricalUpcomingEventsResponse(status="ok", events=events)
-    except Exception as exc:
-        logger.exception("index-prediction upcoming-events history failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc

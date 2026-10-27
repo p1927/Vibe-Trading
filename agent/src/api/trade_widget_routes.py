@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from fastapi import Depends, HTTPException
-from src.api.helpers import redacted_error_detail
+from src.api.helpers import bad_gateway_on_error
 from src.api.security import require_local_or_auth
 from trade_integrations.trade_widgets.store import load_trade_widget
 from typing import Any, Dict
@@ -120,11 +120,8 @@ def get_plan_context(
     if not MonitorService.is_enabled():
         return {"monitor_enabled": False}
 
-    try:
+    with bad_gateway_on_error(logger, "plan-context failed for %s", key):
         report = MonitorService().evaluate_ticker(key)
-    except Exception as exc:
-        logger.exception("plan-context failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if report is None:
         return {

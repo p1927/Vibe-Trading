@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from src.api.helpers import redacted_error_detail
+from src.api.helpers import bad_gateway_on_error, redacted_error_detail
 from src.api.security import require_local_or_auth
 from typing import Any
 from .trade_routes import ExternalPredictionSourceRequest, ExternalPredictionSourcesResponse, ExternalPredictionsRefreshActiveResponse, ExternalPredictionsRefreshJobResponse, ExternalPredictionsRefreshRequest, ExternalPredictionsRefreshStartResponse, ExternalPredictionsResponse, _INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS, _INDEX_PREDICTION_RUN_POLL_SECONDS, _external_prediction_source_health, _external_predictions_status, _index_prediction_run_sse_frame, _sse_event_stream, _ticker_key, logger, trade_router
@@ -22,7 +22,7 @@ def get_external_predictions(
 ) -> ExternalPredictionsResponse:
     """Return cached third-party NIFTY forecasts (no live fetch)."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "get external predictions failed for %s", key):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.store import (
             load_snapshot,
@@ -37,9 +37,6 @@ def get_external_predictions(
             ticker=key,
             snapshot=snapshot_payload,
         )
-    except Exception as exc:
-        logger.exception("get external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(
@@ -52,7 +49,7 @@ def refresh_external_predictions(
 ) -> ExternalPredictionsResponse:
     """Fetch latest third-party forecasts from watchlisted sources."""
     key = _ticker_key(body.ticker)
-    try:
+    with bad_gateway_on_error(logger, "refresh external predictions failed for %s", key):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.refresh import (
             refresh_all_external_predictions,
@@ -70,9 +67,6 @@ def refresh_external_predictions(
             ticker=key,
             snapshot=snapshot_payload,
         )
-    except Exception as exc:
-        logger.exception("refresh external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 def _kick_external_predictions_refresh(body: ExternalPredictionsRefreshRequest) -> tuple[str, str, bool]:
@@ -229,7 +223,7 @@ def list_external_prediction_sources(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "list external prediction sources failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
             load_registry,
@@ -244,9 +238,6 @@ def list_external_prediction_sources(
             ticker=key,
             sources=[s.to_dict() for s in registry],
         )
-    except Exception as exc:
-        logger.exception("list external prediction sources failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(
@@ -312,7 +303,7 @@ def remove_external_prediction_source(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "remove external prediction source failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
             load_registry,
@@ -335,9 +326,6 @@ def remove_external_prediction_source(
             sources=[s.to_dict() for s in registry],
             message=f"Removed {source_id} from watchlist",
         )
-    except Exception as exc:
-        logger.exception("remove external prediction source failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get(
@@ -350,7 +338,7 @@ def discover_external_prediction_sources(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "discover external prediction sources failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.discover import (
             discover_external_sources,
@@ -368,9 +356,6 @@ def discover_external_prediction_sources(
             sources=[s.to_dict() for s in registry if not s.watchlisted],
             candidates=candidates,
         )
-    except Exception as exc:
-        logger.exception("discover external prediction sources failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(

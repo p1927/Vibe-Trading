@@ -6,7 +6,6 @@ import threading
 from fastapi import Depends, HTTPException
 from src.api.helpers import redacted_error_detail
 from src.api.security import require_local_or_auth
-from trade_integrations.market_registry import market_for_ticker
 from typing import Any, Dict
 from .trade_routes import IndexPredictionRefreshResponse, RefreshIndexPredictionRequest, _ticker_key, logger, trade_router
 

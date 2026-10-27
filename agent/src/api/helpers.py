@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict
 
@@ -311,3 +312,19 @@ def redacted_error_detail(exc: BaseException) -> str:
     text = redact_internal_paths(redact_text(str(exc) or type(exc).__name__))[:_ERROR_DETAIL_MAX_CHARS]
     logger.warning("upstream failure surfaced to client: %s: %s", type(exc).__name__, text)
     return text
+
+
+@contextmanager
+def bad_gateway_on_error(log: logging.Logger, message: str, *args: object):
+    """Map any failure inside the ``with`` body to HTTP 502 with a redacted detail.
+
+    The one shape the trade routes repeated ~70 times: ``try: ... except Exception as exc:
+    log.exception(message, *args); raise HTTPException(502, redacted_error_detail(exc)) from exc``.
+    It catches ``Exception`` (so an ``HTTPException`` raised inside is converted too, as the inline
+    blocks did); ``return`` inside the body still returns normally.
+    """
+    try:
+        yield
+    except Exception as exc:
+        log.exception(message, *args)
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc

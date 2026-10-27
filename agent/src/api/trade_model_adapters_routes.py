@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
-from src.api.helpers import redacted_error_detail
+from src.api.helpers import bad_gateway_on_error, redacted_error_detail
 from src.api.security import require_local_or_auth
 from typing import Any, Dict, List
 from .trade_routes import logger, trade_router
@@ -71,7 +71,7 @@ def get_model_adapters(
     _auth: None = Depends(require_local_or_auth),
 ) -> ModelAdaptersResponse:
     """List every registered LLM/embedding model adapter (catalog + runtime overrides)."""
-    try:
+    with bad_gateway_on_error(logger, "model adapters list failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -79,9 +79,6 @@ def get_model_adapters(
 
         adapters = [_model_adapter_to_dict(spec) for spec in list_adapters()]
         return ModelAdaptersResponse(status="ok", adapters=adapters)
-    except Exception as exc:
-        logger.exception("model adapters list failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.patch("/model-adapters/{adapter_id}", response_model=ModelAdaptersResponse)

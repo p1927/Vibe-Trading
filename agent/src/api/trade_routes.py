@@ -11,16 +11,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from src.api.helpers import is_unsafe_path_component, redacted_error_detail, safe_path_component
+from src.api.helpers import bad_gateway_on_error, is_unsafe_path_component, redacted_error_detail, safe_path_component
 from src.api.security import require_event_stream_auth, require_local_or_auth
-from src.config.accessor import get_env_config
-from src.trade import scoreboard_refresh
 from trade_integrations.market_registry import market_for_ticker
 from trade_integrations.trade_widgets.store import load_trade_widget
-from trade_integrations.ui_links import trade_ui_deep_link
 
 logger = logging.getLogger(__name__)
 
@@ -1197,16 +1194,13 @@ def get_index_prediction_factors(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexFactorCatalogResponse:
     """Return catalog of macro, technical, bottom-up, and model factors."""
-    try:
+    with bad_gateway_on_error(logger, "index-prediction factors catalog failed"):
         from trade_integrations.dataflows.index_research.pipeline_stage_catalog import (
             list_factor_catalog,
         )
 
         payload = list_factor_catalog()
         return IndexFactorCatalogResponse(status="ok", **payload)
-    except Exception as exc:
-        logger.exception("index-prediction factors catalog failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/capture-registry", response_model=CaptureRegistryResponse)
@@ -1216,7 +1210,7 @@ def get_capture_registry(
 ) -> CaptureRegistryResponse:
     """Return hub capture registry, factor tiers, and storage stats."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "capture-registry get failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1235,9 +1229,6 @@ def get_capture_registry(
             stats=build_capture_stats(key),
             coverage=capture_coverage_stats(entity_id=key),
         )
-    except Exception as exc:
-        logger.exception("capture-registry get failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.put("/capture-registry", response_model=CaptureRegistryResponse)
@@ -1247,7 +1238,7 @@ def update_capture_registry(
 ) -> CaptureRegistryResponse:
     """Update capture settings for an entity (v1: NIFTY)."""
     key = _ticker_key(body.entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "capture-registry update failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1268,9 +1259,6 @@ def update_capture_registry(
             stats=build_capture_stats(key),
             coverage=capture_coverage_stats(entity_id=key),
         )
-    except Exception as exc:
-        logger.exception("capture-registry update failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/capture-registry/backfill")
@@ -1280,16 +1268,13 @@ def run_capture_registry_backfill(
 ) -> Dict[str, Any]:
     """Backfill proprietary NIFTY factor history (participant OI, flows)."""
     key = _ticker_key(body.entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "capture-registry backfill failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         from trade_integrations.hub_capture.intraday import run_capture_backfill
 
         return run_capture_backfill(entity_id=key, days=max(30, min(body.days, 730)))
-    except Exception as exc:
-        logger.exception("capture-registry backfill failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/capture-registry/intraday")
@@ -1299,16 +1284,13 @@ def run_capture_registry_intraday(
 ) -> Dict[str, Any]:
     """Run one intraday chain capture now (OpenAlgo → hub)."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "capture-registry intraday failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         from trade_integrations.hub_capture.intraday import run_intraday_capture
 
         return run_intraday_capture(entity_id=key)
-    except Exception as exc:
-        logger.exception("capture-registry intraday failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/status", response_model=HubStatusResponse)
@@ -1331,7 +1313,7 @@ def get_hub_status(
     key = _ticker_key(entity_id, default="")
     size = max(1, min(int(page_size or 20), 100))
     current_page = max(1, int(page or 1))
-    try:
+    with bad_gateway_on_error(logger, "hub status failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1361,9 +1343,6 @@ def get_hub_status(
             provenance=provenance,
         )
         return HubStatusResponse(status="ok", hub=hub, news_page=HubNewsPage(**page_meta))
-    except Exception as exc:
-        logger.exception("hub status failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/staging/drain", response_model=HubStagingDrainResponse)
@@ -1374,7 +1353,7 @@ def drain_hub_staging(
 ) -> HubStagingDrainResponse:
     """Manually process a batch of queued staging news refs."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "hub staging drain failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1388,9 +1367,6 @@ def drain_hub_staging(
                 message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
             )
         return HubStagingDrainResponse(status="ok", summary=summary)
-    except Exception as exc:
-        logger.exception("hub staging drain failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
@@ -1398,16 +1374,13 @@ def get_hub_news_pipeline_config(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubNewsPipelineConfigResponse:
     """Return hub news ingest/distill schedule (env defaults + hub override file)."""
-    try:
+    with bad_gateway_on_error(logger, "hub news pipeline config read failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         from trade_integrations.dataflows.news_hub_bridge import get_pipeline_config
 
         return HubNewsPipelineConfigResponse(status="ok", config=get_pipeline_config())
-    except Exception as exc:
-        logger.exception("hub news pipeline config read failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.patch("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
@@ -1441,7 +1414,7 @@ def get_hub_news_events_calendar(
 ) -> HubNewsEventsCalendarResponse:
     """News-extracted future events across the whole corpus, each resolved back to its
     source article(s) for the Hub Events calendar view."""
-    try:
+    with bad_gateway_on_error(logger, "hub news events calendar read failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1494,9 +1467,6 @@ def get_hub_news_events_calendar(
             )
 
         return HubNewsEventsCalendarResponse(status="ok", events=events)
-    except Exception as exc:
-        logger.exception("hub news events calendar read failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 # Routes below live in src/api/trade_model_adapters_routes.py. The import sits here so they register on trade_router
 # in their original order; the names are re-exported because callers and tests patch/import them from trade_routes.
@@ -1519,7 +1489,7 @@ def run_hub_news_maintenance_now(
 ) -> HubStagingDrainResponse:
     """Run full entity maintainer: repair, backfill, compact, cleanup, rollup."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "hub news maintenance failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1546,9 +1516,6 @@ def run_hub_news_maintenance_now(
                 message="Maintainer finished with one or more stage errors; see summary.had_errors.",
             )
         return HubStagingDrainResponse(status="ok", summary=summary)
-    except Exception as exc:
-        logger.exception("hub news maintenance failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/news-pipeline/ingest", response_model=HubStagingDrainResponse)
@@ -1559,7 +1526,7 @@ def run_hub_news_ingest_now(
     """Trigger ingest immediately (full or light mode)."""
     key = _ticker_key(body.ticker)
     mode = (body.mode or "full").strip().lower()
-    try:
+    with bad_gateway_on_error(logger, "hub news ingest now failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1591,9 +1558,6 @@ def run_hub_news_ingest_now(
                 message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
             )
         return HubStagingDrainResponse(status="ok", summary=summary)
-    except Exception as exc:
-        logger.exception("hub news ingest now failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/factor-registry-gaps", response_model=FactorRegistryGapReviewResponse)
@@ -1763,7 +1727,7 @@ def list_hub_discarded_news(
 ) -> HubNewsDiscardedListResponse:
     """List soft-discarded news items (30d retention)."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "hub discarded news list failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1771,9 +1735,6 @@ def list_hub_discarded_news(
 
         items = list_discarded_news(ticker=key, limit=max(1, min(limit, 200)))
         return HubNewsDiscardedListResponse(status="ok", items=items, count=len(items))
-    except Exception as exc:
-        logger.exception("hub discarded news list failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/trace/summary", response_model=HubNewsPipelineTraceSummaryResponse)
@@ -1783,7 +1744,7 @@ def get_hub_news_pipeline_trace_summary(
 ) -> HubNewsPipelineTraceSummaryResponse:
     """Per-source and per-stage counts for the Hub news pipeline node diagram."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "hub news pipeline trace summary failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1791,9 +1752,6 @@ def get_hub_news_pipeline_trace_summary(
 
         summary = pipeline_trace_summary(ticker=key)
         return HubNewsPipelineTraceSummaryResponse(status="ok", summary=summary)
-    except Exception as exc:
-        logger.exception("hub news pipeline trace summary failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/trace/items", response_model=HubNewsPipelineTraceItemsResponse)
@@ -1807,7 +1765,7 @@ def list_hub_news_pipeline_trace_items(
 ) -> HubNewsPipelineTraceItemsResponse:
     """List traced refs at a given pipeline node (source and/or stage+status)."""
     key = _ticker_key(entity_id, default="")
-    try:
+    with bad_gateway_on_error(logger, "hub news pipeline trace items failed"):
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1821,9 +1779,6 @@ def list_hub_news_pipeline_trace_items(
             limit=max(1, min(limit, 200)),
         )
         return HubNewsPipelineTraceItemsResponse(status="ok", items=items, count=len(items))
-    except Exception as exc:
-        logger.exception("hub news pipeline trace items failed")
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/index-prediction/simulate", response_model=SimulateIndexPredictionResponse)
@@ -1833,12 +1788,11 @@ def simulate_index_prediction(
 ) -> SimulateIndexPredictionResponse:
     """What-if: adjust macro factors and recompute index forecast."""
     key = _ticker_key(body.ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction simulate failed for %s", key):
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows.index_research.cascade.calibration_store import (
             load_calibration_from_doc,
         )
-        from trade_integrations.dataflows.index_research.cascade.types import CascadeCalibration
         from trade_integrations.dataflows.index_research.simulate import (
             macro_factors_from_rows,
             simulate_index_prediction as run_simulate,
@@ -1887,9 +1841,6 @@ def simulate_index_prediction(
                 message=str(simulation["error"]),
             )
         return SimulateIndexPredictionResponse(status="ok", ticker=key, simulation=simulation)
-    except Exception as exc:
-        logger.exception("index-prediction simulate failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/playground-context", response_model=IndexPlaygroundContextResponse)
@@ -1900,7 +1851,7 @@ def get_index_playground_context(
 ) -> IndexPlaygroundContextResponse:
     """Headlines, events, and ranked factors for the factor impact workbench."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction playground-context failed for %s", key):
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows.index_research.playground_context import (
             doc_as_of_iso,
@@ -1931,9 +1882,6 @@ def get_index_playground_context(
             lambda: resolve_playground_context(doc, ticker=key, refresh=refresh),
         )
         return IndexPlaygroundContextResponse(status="ok", ticker=key, context=ctx)
-    except Exception as exc:
-        logger.exception("index-prediction playground-context failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/backtest", response_model=IndexBacktestResponse)
@@ -1947,7 +1895,7 @@ def get_index_prediction_backtest(
 ) -> IndexBacktestResponse:
     """Load cached walk-forward backtest or recompute from factor history."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction backtest failed for %s", key):
         from trade_integrations.dataflows.index_research.backtest_runner import (
             load_backtest_report,
             run_and_save_backtest,
@@ -1982,9 +1930,6 @@ def get_index_prediction_backtest(
                 )
         status = str(report.get("status") or "ok")
         return IndexBacktestResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction backtest failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/forecast-lab", response_model=IndexForecastLabResponse)
@@ -2000,7 +1945,7 @@ def index_prediction_forecast_lab(
 ) -> IndexForecastLabResponse:
     """Plug-and-play forecast lab — independent tracks + optional combiner."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction forecast-lab failed for %s", key):
         from trade_integrations.dataflows.index_research.prediction_algorithms.api import run_forecast_lab
         from trade_integrations.dataflows.index_research.prediction_algorithms.config import (
             default_combiner_id,
@@ -2078,9 +2023,6 @@ def index_prediction_forecast_lab(
             result=lab_dict,
             artifact=artifact,
         )
-    except Exception as exc:
-        logger.exception("index-prediction forecast-lab failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 # Routes below live in src/api/trade_track_scoreboard_routes.py. The import sits here so they register on trade_router
 # in their original order; the names are re-exported because callers and tests patch/import them from trade_routes.
@@ -2108,7 +2050,7 @@ def get_index_execution_backtest(
             message="Set INDEX_PREDICTION_EXEC_SIM_ENABLED=1",
         )
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction execution-backtest failed for %s", key):
         from trade_integrations.dataflows.index_research.execution_sim.runner import (
             execution_backtest_path,
             run_execution_backtest,
@@ -2130,9 +2072,6 @@ def get_index_execution_backtest(
             report = json.loads(path.read_text(encoding="utf-8"))
         status = str(report.get("status") or "ok")
         return IndexExecutionBacktestResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction execution-backtest failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/miss-analysis", response_model=IndexMissAnalysisResponse)
@@ -2145,7 +2084,7 @@ def get_index_prediction_miss_analysis(
 ) -> IndexMissAnalysisResponse:
     """Load cached prediction miss RCA or recompute from backtest eval rows."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction miss-analysis failed for %s", key):
         from trade_integrations.dataflows.index_research.prediction_miss_analysis import (
             load_miss_analysis_report,
             run_and_save_miss_analysis,
@@ -2176,9 +2115,6 @@ def get_index_prediction_miss_analysis(
                 )
         status = str(report.get("status") or "ok")
         return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction miss-analysis failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/quant-review", response_model=IndexQuantReviewResponse)
@@ -2190,7 +2126,7 @@ def get_index_quant_review(
 ) -> IndexQuantReviewResponse:
     """Load cached India Quant Reviewer artifact (second opinion vs Ridge)."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction quant-review failed for %s", key):
         from trade_integrations.bridge.quant_review import run_quant_review
         from trade_integrations.context.hub import (
             is_quant_review_cache_fresh,
@@ -2206,9 +2142,6 @@ def get_index_quant_review(
             if review is None:
                 review = run_quant_review(key, horizon_days=horizon_days, save=True)
         return IndexQuantReviewResponse(status="ok", ticker=key, review=review)
-    except Exception as exc:
-        logger.exception("index-prediction quant-review failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/data-audit", response_model=IndexDataAuditResponse)
@@ -2221,7 +2154,7 @@ def get_index_prediction_data_audit(
 ) -> IndexDataAuditResponse:
     """Load hub data completeness audit for prediction RCA."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction data-audit failed for %s", key):
         from trade_integrations.dataflows.index_research.hub_data_audit import (
             load_data_audit_report,
             run_and_save_data_audit,
@@ -2245,9 +2178,6 @@ def get_index_prediction_data_audit(
                 )
         status = str(report.get("status") or "ok")
         return IndexDataAuditResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction data-audit failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/counterfactual", response_model=IndexCounterfactualResponse)
@@ -2260,7 +2190,7 @@ def get_index_prediction_counterfactual(
 ) -> IndexCounterfactualResponse:
     """Load cached counterfactual decomposition or recompute from backtest eval rows."""
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction counterfactual failed for %s", key):
         from trade_integrations.dataflows.index_research.prediction_counterfactual import (
             load_counterfactual_report,
             run_and_save_counterfactual,
@@ -2291,9 +2221,6 @@ def get_index_prediction_counterfactual(
                 )
         status = str(report.get("status") or "ok")
         return IndexCounterfactualResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction counterfactual failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/news-impact", response_model=IndexNewsImpactResponse)
@@ -2310,7 +2237,7 @@ def get_index_prediction_news_impact(
     index-level ingest for NIFTY only (tiered sources allowed) — not Nifty-50 batch.
     """
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "index-prediction news-impact failed for %s", key):
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows import news_hub_bridge
         from src.trade.hub_bridge import ensure_trade_stack_path
@@ -2340,9 +2267,6 @@ def get_index_prediction_news_impact(
             )
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction news-impact failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/news-impact/factor-timeline")
@@ -2361,7 +2285,7 @@ def get_index_prediction_news_factor_timeline(
     key = _ticker_key(ticker)
     if not factor_id.strip():
         raise HTTPException(status_code=400, detail="factor_id is required")
-    try:
+    with bad_gateway_on_error(logger, "index-prediction news factor-timeline failed for %s/%s", key, factor_id):
         from trade_integrations.dataflows import news_hub_bridge
 
         result = news_hub_bridge.factor_scenario_timeline(
@@ -2371,9 +2295,6 @@ def get_index_prediction_news_factor_timeline(
             horizon_days=horizon_days,
         )
         return result
-    except Exception as exc:
-        logger.exception("index-prediction news factor-timeline failed for %s/%s", key, factor_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/index-prediction/news-scenarios/session", response_model=NewsScenarioSessionResponse)
@@ -2523,7 +2444,7 @@ def list_news_scenarios(
     _auth: None = Depends(require_local_or_auth),
 ) -> NewsEventScenarioResponse:
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "list news scenarios failed for %s", key):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.news_hub_bridge import (
             list_recent_news_scenarios,
@@ -2532,9 +2453,6 @@ def list_news_scenarios(
         ensure_trade_stack_path()
         rows = list_recent_news_scenarios(key, limit=limit)
         return NewsEventScenarioResponse(status="ok", ticker=key, scenarios=rows)
-    except Exception as exc:
-        logger.exception("list news scenarios failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get(
@@ -2547,7 +2465,7 @@ def get_news_scenario(
     _auth: None = Depends(require_local_or_auth),
 ) -> NewsEventScenarioResponse:
     key = _ticker_key(ticker)
-    try:
+    with bad_gateway_on_error(logger, "get news scenario failed for %s", scenario_id):
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.news_hub_bridge import (
             load_news_event_scenario,
@@ -2562,9 +2480,6 @@ def get_news_scenario(
                 message=f"Scenario {scenario_id} not found",
             )
         return NewsEventScenarioResponse(status="ok", ticker=key, scenario=scenario)
-    except Exception as exc:
-        logger.exception("get news scenario failed for %s", scenario_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 _INDEX_PREDICTION_RUN_POLL_SECONDS = 0.5
@@ -2705,7 +2620,7 @@ def get_index_verified_news(
             return None
         return [part.strip() for part in raw.split(",") if part.strip()]
 
-    try:
+    with bad_gateway_on_error(logger, "index-prediction verified-news failed for %s", key):
         from trade_integrations.dataflows import news_hub_bridge
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2733,9 +2648,6 @@ def get_index_verified_news(
             items=items,
             inventory=inv,
         )
-    except Exception as exc:
-        logger.exception("index-prediction verified-news failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/day-attribution", response_model=DayAttributionResponse)
@@ -2745,7 +2657,7 @@ def get_index_day_attribution(
     _auth: None = Depends(require_local_or_auth),
 ) -> DayAttributionResponse:
     """Explain factor and calendar drivers for one Nifty trading day."""
-    try:
+    with bad_gateway_on_error(logger, "day-attribution failed for %s", date):
         from trade_integrations.dataflows.index_research.day_attribution import explain_nifty_day
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2761,9 +2673,6 @@ def get_index_day_attribution(
                 message=str(payload.get("message") or "Date not found"),
             )
         return DayAttributionResponse(status="ok", date=str(payload.get("date") or date), attribution=payload)
-    except Exception as exc:
-        logger.exception("day-attribution failed for %s", date)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 
