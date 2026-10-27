@@ -25,6 +25,10 @@ SCOPE = ('agent/src/scheduled_research',
  'agent/src/trade',
  'agent/src/trading/connectors/openalgo',
  'agent/src/api/trade_routes.py',
+ 'agent/src/api/trade_hub_market_data_routes.py',
+ 'agent/src/api/trade_markets_routes.py',
+ 'agent/src/api/trade_forecast_engine_routes.py',
+ 'agent/src/api/trade_prediction_jobs_routes.py',
  'agent/src/api/security.py',
  'agent/src/api/server_main.py',
  'agent/src/api/runs_routes.py',
@@ -205,7 +209,7 @@ def hostpath_sites(tree: ast.AST) -> list:
 
 
 CLOCK_ALLOWED: dict[str, tuple[int, str]] = {'agent/src/api/runs_routes.py': (1, "display stamp of a run directory's mtime"),
- 'agent/src/api/trade_routes.py': (1, "'today' reference of a read-only historical-events listing, not a stored key"),
+ 'agent/src/api/trade_prediction_jobs_routes.py': (1, "'today' reference of a read-only historical-events listing, not a stored key"),
  'agent/src/scheduled_research/factor_health_jobs.py': (1,
                                                         "end of the factor reference-check window (same as Trade's factors/plan.py "
                                                         'allow-list entry)'),
