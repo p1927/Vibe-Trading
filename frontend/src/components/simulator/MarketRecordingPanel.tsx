@@ -80,8 +80,6 @@ export function MarketRecordingPanel({
   const [error, setError] = useState<string | null>(null);
   // Failed background reads: an empty/old jobs list would otherwise read as "nothing recording".
   const [syncError, setSyncError] = useState<string | null>(null);
-  // Own state: the 10 s status poll clears syncError on success, which must not hide a failed symbol-list load.
-  const [symbolsError, setSymbolsError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api
