@@ -2117,6 +2117,27 @@ def get_index_prediction_miss_analysis(
         return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
 
 
+@trade_router.get("/index-prediction/fan-delta", response_model=IndexMissAnalysisResponse)
+def get_index_prediction_fan_delta(
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexMissAnalysisResponse:
+    """Latest per-horizon delta and miss analysis of the newest forecast fan (written by the ledger reconcile pass)."""
+    key = _ticker_key(ticker)
+    try:
+        from trade_integrations.dataflows.index_research.fan_delta_analysis import load_fan_delta_report
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        report = load_fan_delta_report(key)
+        if report is None:
+            return IndexMissAnalysisResponse(status="pending", ticker=key, message="no fan has matured a point yet")
+        return IndexMissAnalysisResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction fan-delta failed for %s", key)
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+
+
 @trade_router.get("/index-prediction/quant-review", response_model=IndexQuantReviewResponse)
 def get_index_quant_review(
     ticker: str = "NIFTY",
