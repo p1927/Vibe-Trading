@@ -59,7 +59,15 @@ def test_lot_size_unknown_stock_is_none_not_one(monkeypatch) -> None:
 
     from src.tools import india_options_chain_tool as t
 
-    assert t._lot_size_for("NIFTY") == mc.UNDERLYING_META["NIFTY"]["lotsize"]
+    from trade_integrations.stock_simulator.lot_sizes import LotSizeUnavailable, lot_size
+
+    assert t._lot_size_for("NIFTY") == lot_size("NIFTY")
+    # the chain's own expiry decides: the 2025-01-02 weekly is 75 beside the January monthly at 25
+    assert t._lot_size_for("NIFTY", "2025-01-02") == 75 and t._lot_size_for("NIFTY", "2025-01-30") == 25
+    with pytest.raises(LotSizeUnavailable):  # before the first confirmed row: typed error, never today's lot
+        t._lot_size_for("NIFTY", "2020-01-30")
+    envelope = json.loads(t._success("NIFTY", "stock_simulator", {"expiry_date": "2020-01-30", "chain": []}, underlying="NIFTY"))
+    assert envelope["ok"] is False and "lot size" in envelope["error"]
 
     def boom(sym):
         raise mc.StockLotSizeUnavailable("none")

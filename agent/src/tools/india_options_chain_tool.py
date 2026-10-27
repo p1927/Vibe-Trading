@@ -312,21 +312,18 @@ def _leg_row_history(
     }
 
 
-def _lot_size_for(underlying: str) -> int | None:
-    """Exchange lot size for the contract multiplier. Indexes read ``UNDERLYING_META``
-    (values change on exchange revision; see that dict's own comment); a stock
-    underlying reads its real per-symbol NFO lot from the master contract, and
-    returns ``None`` (unknown, never a guessed ``1``) when that is unavailable.
-    This function must stay the only place that resolves lot sizes."""
-    from trade_integrations.stock_simulator.master_contract import (
-        UNDERLYING_META,
-        StockLotSizeUnavailable,
-        _stock_option_lotsize,
-    )
+def _lot_size_for(underlying: str, expiry: str | None = None, as_of: datetime | None = None) -> int | None:
+    """Exchange lot size for the contract multiplier. An index resolves through the one dated table
+    (``stock_simulator.lot_sizes.lot_size``): the lot follows the chain's own ``expiry`` (NIFTY's 2025-01-02 weekly
+    is 75 beside a 25-lot January monthly), else the contract expiring first on/after ``as_of`` (chain read time).
+    ``LotSizeUnavailable`` propagates: never a silent default to today's lot. A stock underlying reads its real
+    per-symbol NFO lot from the master contract and returns ``None`` (unknown, never a guessed ``1``) when that is
+    unavailable. This function must stay the only place that resolves lot sizes."""
+    from trade_integrations.stock_simulator.lot_sizes import LOT_TABLE, lot_size
+    from trade_integrations.stock_simulator.master_contract import StockLotSizeUnavailable, _stock_option_lotsize
 
-    meta = UNDERLYING_META.get(underlying.upper())
-    if meta:
-        return meta["lotsize"]
+    if any(r.underlying == underlying.upper() for r in LOT_TABLE):
+        return lot_size(underlying, as_of.date() if as_of else None, expiry=expiry[:10] if expiry else None)
     try:
         return _stock_option_lotsize(underlying)
     except StockLotSizeUnavailable as exc:
@@ -369,6 +366,14 @@ def _success(
     if not expirations and expiration is not None:
         expirations = [expiration]
 
+    from trade_integrations.stock_simulator.lot_sizes import LotSizeUnavailable
+
+    read_at = datetime.now(timezone.utc)
+    try:
+        lot = _lot_size_for(underlying, chain.get("expiry_date"), read_at)
+    except LotSizeUnavailable as exc:
+        return _error(f"no confirmed lot size for {underlying} expiry {chain.get('expiry_date')}: {exc}")
+
     data = {
         "ticker": ticker,
         "underlying": underlying,
@@ -376,13 +381,13 @@ def _success(
         "expiration": expiration,
         "expirations": expirations,
         "underlying_ltp": underlying_ltp,
-        "lot_size": _lot_size_for(underlying),
+        "lot_size": lot,
         "calls_count": len(calls),
         "puts_count": len(puts),
         "calls": calls,
         "puts": puts,
         # Point-in-time: when this chain was read, so a consumer can show its age (vendor chains carry no clock).
-        "as_of": datetime.now(timezone.utc).isoformat(),
+        "as_of": read_at.isoformat(),
     }
     return json.dumps(
         {"ok": True, "market": "india_equity", "source": source, "data": data},
@@ -404,6 +409,17 @@ def _error(message: str) -> str:
 _KNOWN_INDEXES = ("NIFTY", "BANKNIFTY", "SENSEX")
 
 
+def _picker_lot(name: str) -> int | None:
+    """Picker display lot (front contract now); ``None`` = no confirmed lot, never a guess."""
+    from trade_integrations.stock_simulator.lot_sizes import LotSizeUnavailable
+
+    try:
+        return _lot_size_for(name, as_of=datetime.now(timezone.utc))
+    except LotSizeUnavailable as exc:
+        logger.warning("lot size unknown for %s: %s", name, exc)
+        return None
+
+
 def list_india_underlyings(source: str) -> Dict[str, Any]:
     """Available underlyings for the picker: known indexes always, plus
     recorded equities when ``source == "stock_simulator"`` (``None`` — not
@@ -422,5 +438,5 @@ def list_india_underlyings(source: str) -> Dict[str, Any]:
     return {
         "indexes": list(_KNOWN_INDEXES),
         "equities": equities,
-        "lot_sizes": {name: _lot_size_for(name) for name in _KNOWN_INDEXES},
+        "lot_sizes": {name: _picker_lot(name) for name in _KNOWN_INDEXES},
     }
