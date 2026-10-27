@@ -483,11 +483,9 @@ def _allow(broker, session_id, connector_module, config, intent, place_kwargs, m
                 reason_code="pending_position_evidence_unavailable",
             )
         try:
-            pending = pending_action.new_pending_order(
-                broker, place_kwargs,
-                pre_position_qty=pre_position_qty,
+            pending = pending_action.reserve_pending_order(
+                broker, place_kwargs, pre_position_qty=pre_position_qty,
             )
-            pending_action.save_pending_action(pending)
         except Exception as exc:  # noqa: BLE001 - missing evidence forbids the write
             logger.warning("pending action write failed for %s: %s", broker, exc)
             return _deny(

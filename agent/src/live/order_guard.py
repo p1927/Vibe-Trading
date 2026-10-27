@@ -64,6 +64,7 @@ from src.live.extractors import get_extractor
 from src.live.halt import halt_flag_set
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION, Mandate
 from src.live.mandate.store import load_mandate
+from src.live import pending_action
 from src.live.daily_count import (
     DailyCountError,
     DailyOrderLockUnavailable,
@@ -351,9 +352,13 @@ class LiveOrderGuardTool(MCPRemoteTool):
 
         * **non-error** → increment the daily counter and audit
           ``kind="order_placed"`` / ``outcome="accepted"``.
-        * **error envelope** → audit ``kind="order_rejected"`` /
-          ``outcome="error"`` and do NOT consume a daily count (a failed forward
+        * **error envelope, broker answered** → audit ``kind="order_rejected"`` /
+          ``outcome="error"``, no daily count, marker cleared (a failed forward
           never placed an order).
+        * **error envelope, outcome unknown** (timeout / dropped connection /
+          unparseable reply) → audit ``kind="order_unresolved"``, the daily count
+          IS spent and the pending marker stays, so the next order is refused
+          until it is recovered (the order may be live).
 
         Either way the returned tool_result carries the redacted audit record
         under :data:`LIVE_ACTION_RESULT_KEY` so the api_server SSE relay can emit
@@ -368,10 +373,37 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 checked=["mandate", "expiry", "halt_flag", "audit_ledger"],
                 mandate=mandate,
             )
+        # The same ownership marker the direct-SDK gate writes (`pending_action`), written BEFORE the forward: a
+        # timeout after the broker accepted the order must not read as "rejected, safe to resend". An earlier
+        # unresolved marker (this broker, any order) refuses the new order until it is recovered by hand.
+        try:
+            unresolved = pending_action.load_pending_action(self.broker)
+        except pending_action.PendingActionError:
+            unresolved = True
+        if unresolved is not None:
+            return self._deny(
+                reason="an earlier order has an unresolved broker outcome — recover it before ordering again",
+                checked=["mandate", "expiry", "halt_flag", "pending_action"],
+                mandate=mandate,
+            )
+        try:
+            pending = pending_action.reserve_pending_order(
+                self.broker, self._pending_request(intent), pre_position_qty=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - missing evidence forbids the write
+            logger.warning("pending action write failed for %s: %s", self.broker, exc)
+            return self._deny(
+                reason="pending broker action could not be persisted",
+                checked=["mandate", "expiry", "halt_flag", "pending_action"],
+                mandate=mandate,
+            )
         advisory = self._advisory_review(intent, positions, balance, mandate)
         forwarded = super().execute(**kwargs)
         broker_response = self._safe_json(forwarded)
         is_error = self._is_error_envelope(broker_response)
+        # An error envelope is a definite rejection only when the broker answered; a timeout / dropped
+        # connection / unparseable reply may still have placed the order.
+        unresolved_outcome = is_error and self._is_ambiguous_failure(broker_response)
 
         checked = [
             "mandate", "expiry", "halt_flag", "intent",
@@ -388,7 +420,25 @@ class LiveOrderGuardTool(MCPRemoteTool):
             "checked_limits": checked,
             "advisory": advisory,
         }
-        if is_error:
+        if unresolved_outcome:
+            # Keep the marker (it blocks the next order) and spend the daily count: the order may be live.
+            try:
+                increment_daily_count(self.broker, pending.action_id)
+            except DailyCountError:
+                logger.error("daily order count could not be persisted for %s after an unresolved order", self.broker)
+            gate_decision["reason_code"] = "pending_action_unresolved"
+            record = self._audit(
+                kind="order_unresolved",
+                outcome="error",
+                mandate=mandate,
+                intent=intent,
+                broker_request=dict(kwargs),
+                broker_response=broker_response,
+                gate_decision=gate_decision,
+                error=self._error_message(broker_response),
+            )
+        elif is_error:
+            self._clear_pending(pending)
             record = self._audit(
                 kind="order_rejected",
                 outcome="error",
@@ -404,7 +454,7 @@ class LiveOrderGuardTool(MCPRemoteTool):
             # the order: raising here would have the caller retry it (a double order), so a failed count is
             # recorded on the audit record instead (as the direct-SDK gate does).
             try:
-                self._increment_daily_count()
+                increment_daily_count(self.broker, pending.action_id)
             except DailyCountError:
                 logger.error("daily order count could not be persisted for %s after an accepted order", self.broker)
                 gate_decision["reason_code"] = "daily_action_accounting_failed"
@@ -417,7 +467,42 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 broker_response=broker_response,
                 gate_decision=gate_decision,
             )
+            self._clear_pending(pending)
         return self._embed_live_action(forwarded, record)
+
+    def _clear_pending(self, pending: pending_action.PendingAction) -> None:
+        """Remove the marker once the outcome is known. A failed clear leaves it in place: the next order is then
+        refused as unresolved, which is the safe side."""
+        try:
+            pending_action.clear_pending_action(self.broker, pending.action_id)
+        except Exception as exc:  # noqa: BLE001 - retain the recovery block
+            logger.error("pending action for %s could not be cleared: %s", self.broker, exc)
+
+    @staticmethod
+    def _pending_request(intent: OrderIntent) -> dict[str, Any]:
+        """The marker's order evidence, from the normalized intent (exactly one size, per the marker's schema)."""
+        by_quantity = intent.quantity is not None
+        return {
+            "symbol": intent.symbol,
+            "side": intent.side,
+            "quantity": intent.quantity if by_quantity else None,
+            "notional": None if by_quantity else intent.notional_usd,
+            "order_type": "limit" if intent.limit_price is not None else "market",
+            "limit_price": intent.limit_price,
+        }
+
+    # ponytail: substring heuristic over the error text; the ceiling is a transport failure worded in a way not
+    # listed here, which would be treated as a definite rejection. Upgrade: a typed `ambiguous` flag on the
+    # MCPServerAdapter error envelope.
+    _AMBIGUOUS_MARKERS = ("timeout", "timed out", "connection", "network", "reset by peer", "unreachable", "502", "503", "504")
+
+    @classmethod
+    def _is_ambiguous_failure(cls, broker_response: dict | None) -> bool:
+        """Whether an error envelope leaves it unknown if the broker placed the order."""
+        if not isinstance(broker_response, dict):
+            return True
+        text = cls._error_message(broker_response).lower()
+        return any(marker in text for marker in cls._AMBIGUOUS_MARKERS)
 
     # -- advisory review (observational, never blocks) ----------------------
 
@@ -644,10 +729,6 @@ class LiveOrderGuardTool(MCPRemoteTool):
     def _read_daily_count(self) -> int:
         """Return today's order count via the shared per-broker counter."""
         return read_daily_count(self.broker)
-
-    def _increment_daily_count(self) -> None:
-        """Increment today's order count via the shared per-broker counter."""
-        increment_daily_count(self.broker)
 
     # -- audit + misc -------------------------------------------------------
 

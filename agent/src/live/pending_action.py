@@ -142,7 +142,7 @@ class PendingAction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     schema_version: Literal[1]
-    broker: Literal["alpaca"]
+    broker: str = Field(min_length=1, max_length=32)
     action_id: str = Field(pattern=r"^act_[0-9a-f]{32}$")
     phase: Literal[
         "pending_write", "resolved_fill_pending_audit", "resolved_needs_revalidation"
@@ -260,6 +260,21 @@ def new_pending_order(
     )
 
 
+def reserve_pending_order(
+    broker: str,
+    request: Mapping[str, object],
+    *,
+    pre_position_qty: str | float | int | None,
+) -> PendingAction:
+    """Build and durably write the marker BEFORE a broker call (the one reservation both order gates use).
+
+    Raises `PendingActionError` (or `ValueError`/`ValidationError` for a malformed request) when the marker
+    cannot be built or written: missing evidence forbids the write, so the caller must refuse the order."""
+    action = new_pending_order(broker, request, pre_position_qty=pre_position_qty)
+    save_pending_action(action)
+    return action
+
+
 def pending_action_path(broker: str) -> Path:
     return broker_dir(_broker_key(broker)) / _FILENAME
 
@@ -359,7 +374,9 @@ def clear_pending_action(broker: str, action_id: str) -> None:
 
 
 def _broker_key(broker: str) -> str:
+    """The broker key a marker is filed under: any plain lower-case broker name (the Alpaca SDK gate and the
+    MCP order guard share this one marker; a path-like key is refused by `broker_dir` too)."""
     key = str(broker or "").strip().lower()
-    if key != "alpaca":
-        raise ValueError("pending submit ownership currently supports Alpaca only")
+    if not key or len(key) > 32 or not all(c.isalnum() or c in "_-" for c in key):
+        raise ValueError("a pending submit marker needs a plain broker key")
     return key

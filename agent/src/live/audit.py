@@ -127,6 +127,7 @@ LiveActionKind = Literal[
     "order_placed",
     "order_cancelled",
     "order_rejected",
+    "order_unresolved",
     "mandate_committed",
     "breach",
     "halt_tripped",
