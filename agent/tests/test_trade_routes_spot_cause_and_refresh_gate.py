@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api import security, trade_routes
+from src.api import security, trade_refresh_routes, trade_routes
 from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
 
 
@@ -59,7 +59,7 @@ def test_spot_error_stays_plain_when_the_simulator_reports_no_cause(client, monk
 @pytest.mark.unit
 @pytest.mark.parametrize("reason", [None, "market_closed", "replay_armed", "simulator_unavailable"])
 def test_refresh_gate_reports_the_same_rule_the_post_applies(client, monkeypatch, reason):
-    monkeypatch.setattr(trade_routes, "_light_refresh_skip_reason", lambda key: reason)
+    monkeypatch.setattr(trade_refresh_routes, "_light_refresh_skip_reason", lambda key: reason)
     gate = client.get("/trade/index-prediction/refresh-gate?ticker=NIFTY").json()
     assert gate == {"ticker": "NIFTY", "skip_reason": reason}
     if reason:

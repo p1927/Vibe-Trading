@@ -2082,57 +2082,12 @@ def index_prediction_forecast_lab(
         logger.exception("index-prediction forecast-lab failed for %s", key)
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
-
-@trade_router.get("/index-prediction/track-scoreboard", response_model=IndexTrackScoreboardResponse)
-def get_index_track_scoreboard(
-    ticker: str = "NIFTY",
-    days: int = 365,
-    horizon_days: int | None = None,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexTrackScoreboardResponse:
-    """The cached per-track scoreboard, with `as_of`, `stale`/`needs_refresh` and the latest recompute job.
-
-    A GET never recomputes (the walk-forward takes minutes; an inline recompute never returned in 170 s,
-    D198): refresh is `POST /index-prediction/track-scoreboard/refresh`."""
-    key = _ticker_key(ticker)
-    try:
-        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
-            load_scoreboard,
-            normalize_scoreboard_report,
-            scoreboard_needs_refresh,
-        )
-        from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
-            enrich_scoreboard_with_live,
-        )
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        history_days = scoreboard_refresh.history_days(key, days)
-        report = normalize_scoreboard_report(load_scoreboard(key) or {"status": "empty", "ticker": key})
-        report["needs_refresh"] = scoreboard_needs_refresh(report, horizon_days=horizon_days, history_days=history_days)
-        report["stale"] = report["needs_refresh"]
-        report = enrich_scoreboard_with_live(report, ticker=key)
-        report["refresh_job"] = scoreboard_refresh.current_job()
-        return IndexTrackScoreboardResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction track-scoreboard failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-
-
-@trade_router.post("/index-prediction/track-scoreboard/refresh")
-def refresh_index_track_scoreboard(
-    ticker: str = "NIFTY",
-    days: int = 365,
-    horizon_days: int | None = None,
-    eval_step: int = 5,
-    _auth: None = Depends(require_local_or_auth),
-) -> Dict[str, Any]:
-    """Start the walk-forward recompute in the background (single-flight) and return its job id.
-
-    A run already in flight is returned as-is (`started: false`); poll GET track-scoreboard's
-    `report.refresh_job` until `state` is `done`/`failed`, then read the new report."""
-    started, job = scoreboard_refresh.start_refresh(_ticker_key(ticker), days, horizon_days, eval_step)
-    return {"status": "ok", "started": started, "job": job}
+# Routes below live in src/api/trade_track_scoreboard_routes.py. The import sits here so they register on trade_router
+# in their original order; the names are re-exported because callers and tests patch/import them from trade_routes.
+from .trade_track_scoreboard_routes import (  # noqa: E402,F401
+    get_index_track_scoreboard,
+    refresh_index_track_scoreboard,
+)
 
 
 @trade_router.get("/index-prediction/execution-backtest", response_model=IndexExecutionBacktestResponse)
@@ -3674,88 +3629,14 @@ async def stream_recording_job(
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _recording_stream_response(job_id, request)
 
-
-_LIGHT_REFRESH_LOCK = threading.Lock()
-
-
-def _light_refresh_skip_reason(key: str) -> str | None:
-    """Why a non-forced poll must not run now: `replay_armed`, `market_closed` or `simulator_unavailable`."""
-    from src.trade.hub_bridge import ensure_trade_stack_path
-
-    ensure_trade_stack_path()
-    from nautilus_openalgo_bridge.market_hours import is_market_open_for_market
-    from trade_integrations.dataflows.news_hub_bridge.replay_gate import is_replaying
-    from trade_integrations.market_registry import market_for_ticker
-
-    from trade_integrations.stock_simulator.integration import simulator_status
-
-    market = market_for_ticker(key)
-    market_open = is_market_open_for_market(market)
-    try:
-        # The simulator also replays by itself while the market is shut (`market_closed_fallback`): that is
-        # a closed market, not an armed replay, and the page must say so.
-        if is_replaying(market) and (market_open or simulator_status().get("reason") == "explicit"):
-            return "replay_armed"
-    except Exception:  # simulator cannot answer: polling blind during a possible replay is worse than skipping
-        logger.warning("light refresh skipped: replay state unknown", exc_info=True)
-        return "simulator_unavailable"
-    return None if market_open else "market_closed"
-
-
-@trade_router.get("/index-prediction/refresh-gate")
-def get_index_prediction_refresh_gate(
-    ticker: str = "NIFTY",
-    _auth: None = Depends(require_local_or_auth),
-) -> Dict[str, Any]:
-    """The same gate the refresh POST applies, read-only: lets the page skip the POST when it would no-op."""
-    key = _ticker_key(ticker)
-    return {"ticker": key, "skip_reason": _light_refresh_skip_reason(key)}
-
-
-@trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)
-def refresh_index_prediction(
-    body: RefreshIndexPredictionRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexPredictionRefreshResponse:
-    """Lightweight macro + cached-constituent refresh for live polling.
-
-    A non-forced poll runs only during the market's session, never while a replay is armed, and one at a
-    time; otherwise it answers `status: skipped` with the reason and writes nothing (merely opening the
-    prediction page must not mutate the artifact)."""
-    key = _ticker_key(body.ticker)
-    if not body.force:
-        skip = _light_refresh_skip_reason(key)
-        if skip:
-            return IndexPredictionRefreshResponse(status="skipped", ticker=key, reason=skip)
-    if not _LIGHT_REFRESH_LOCK.acquire(blocking=False):
-        return IndexPredictionRefreshResponse(status="skipped", ticker=key, reason="refresh_in_flight")
-    try:
-        from trade_integrations.dataflows.index_research.light_refresh import run_index_light_refresh
-        from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        doc, reason = run_index_light_refresh(
-            key,
-            horizon_days=body.horizon_days,
-            force=body.force,
-            poll_mode=True,
-        )
-        artifact = _index_doc_to_panel(doc)
-        artifact["asset_type"] = "index"
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("index-prediction refresh failed for %s", key)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-    finally:
-        _LIGHT_REFRESH_LOCK.release()
-
-    return IndexPredictionRefreshResponse(
-        status="ok",
-        ticker=key,
-        reason=reason,
-        artifact=artifact,
-    )
+# Routes below live in src/api/trade_refresh_routes.py. The import sits here so they register on trade_router
+# in their original order; the names are re-exported because callers and tests patch/import them from trade_routes.
+from .trade_refresh_routes import (  # noqa: E402,F401
+    _LIGHT_REFRESH_LOCK,
+    _light_refresh_skip_reason,
+    get_index_prediction_refresh_gate,
+    refresh_index_prediction,
+)
 
 
 @trade_router.get("/index-prediction/history", response_model=IndexPredictionHistoryResponse)
