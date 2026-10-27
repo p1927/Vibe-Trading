@@ -2132,7 +2132,7 @@ def get_index_ledger_misses(
 ) -> IndexLedgerMissesResponse:
     """The live ledger's wrong-direction misses with their RCA, counterfactual and surprise flag (how much, why)."""
     try:
-        from trade_integrations.dataflows.index_research.prediction_ledger import read_ledger_misses
+        from trade_integrations.dataflows.prediction_ledger_bridge import read_ledger_misses
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
